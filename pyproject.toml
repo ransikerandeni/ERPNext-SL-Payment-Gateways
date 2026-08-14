@@ -1,0 +1,23 @@
+[project]
+name = "sl_payment_gateways"
+authors = [
+    { name = "Ransike Randeni", email = "ransikerandeni@gmail.com" }
+]
+description = "Pluggable Sri Lankan payment gateway integrations for ERPNext (WebXPay, PayHere, and more)"
+requires-python = ">=3.10"
+readme = "README.md"
+dynamic = ["version"]
+dependencies = [
+    "pycryptodome>=3.18.0,<4.0.0",
+]
+
+[build-system]
+requires = ["flit_core >=3.4,<4"]
+build-backend = "flit_core.buildapi"
+
+[project.urls]
+Repository = "https://github.com/ransikerandeni/ERPNext-SL-Payment-Gateways.git"
+"Bug Reports" = "https://github.com/ransikerandeni/ERPNext-SL-Payment-Gateways/issues"
+
+[tool.bench.frappe-dependencies]
+frappe = ">=14.0.0"
