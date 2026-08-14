@@ -11,9 +11,46 @@ dependencies = [
     "pycryptodome>=3.18.0,<4.0.0",
 ]
 
+[project.optional-dependencies]
+# Everything needed to run `pytest` against this app without a bench.
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.5",
+]
+
 [build-system]
 requires = ["flit_core >=3.4,<4"]
 build-backend = "flit_core.buildapi"
+
+[tool.flit.module]
+name = "sl_payment_gateways"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The suite stubs frappe (see tests/frappe_stub.py) so it runs standalone.
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+indent-width = 4
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "S", "C4", "UP"]
+ignore = [
+    "E501",   # line length is handled by the formatter
+    "W191",   # this codebase indents with tabs, like Frappe itself
+    "E101",
+    "UP031",  # %-formatting throughout, matching Frappe's own style
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "S101",  # assert is the point
+    "S105",  # test credentials are fixtures, not secrets
+    "S106",
+    "S311",  # seeded random is for reproducible fuzzing, not crypto
+    "S324",  # mirrors PayHere's own MD5 scheme to check the implementation
+]
 
 [project.urls]
 Repository = "https://github.com/ransikerandeni/ERPNext-SL-Payment-Gateways.git"

@@ -11,10 +11,25 @@
 def build_checkout(order_id: str, amount: str, currency: str, customer: dict) -> dict:
 	"""Build whatever the gateway needs to start a checkout.
 
-	`customer` has whatever fields the caller passed through (e.g.
-	first_name, last_name, email, contact_number) - a gateway module
-	only needs to use the ones it actually requires and should ignore
-	the rest via .get(), since not every gateway needs every field.
+	`customer` carries whatever the caller passed through. Conventional
+	keys, all optional unless a gateway says otherwise:
+
+		first_name, last_name, email, contact_number,
+		address, city, country, organization,
+		items,                       # order description shown at checkout
+		return_url, cancel_url,      # where the browser goes afterwards
+		notify_url                   # server-to-server webhook target
+
+	A gateway module uses only the keys it needs, via .get(). Any URL a
+	caller supplies must be run through utils.site_url() so it can't point
+	off-site. Validate order_id/amount/currency through the helpers in
+	sl_payment_gateways.utils rather than trusting them: they arrive from
+	an HTTP request and end up inside signed, delimited payment strings.
+
+	IMPORTANT: `amount` is whatever the caller said. This app cannot know
+	what an order should cost, so build_checkout() will faithfully sign a
+	checkout for any figure. The caller must derive it server-side from
+	its own records - see the security note in api.py.
 
 	Returns a dict the client script can act on directly:
 		{
@@ -37,7 +52,20 @@ def verify_response(form_dict) -> dict:
 		{
 			"order_id": "...",   # our own reference (Slot Allocation name)
 			"status": "Paid" | "Failed" | "Pending",
+			"amount": "1500.00" | None,   # None if the gateway omits it
+			"currency": "LKR" | None,
 			"raw": {...},         # parsed gateway response, for logging
 		}
+
+	What a successful return does NOT establish, and what every caller
+	therefore still has to check for itself:
+
+	  * that the order exists, is unsettled, and was set up for this
+	    gateway (nothing here consults your records);
+	  * that the amount is right - compare `amount`/`currency` against the
+	    order, and note that a gateway reporting None means the response
+	    carries no amount to check at all;
+	  * that this is not a replay - none of these gateways send a nonce,
+	    so make your handler idempotent.
 	"""
 	raise NotImplementedError

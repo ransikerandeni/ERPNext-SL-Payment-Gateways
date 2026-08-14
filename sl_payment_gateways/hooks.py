@@ -1,4 +1,6 @@
-from . import __version__ as app_version
+# Frappe reads hooks.app_version off this module, so the rebind is the
+# point even though nothing here references it.
+from . import __version__ as app_version  # noqa: F401
 
 app_name = "sl_payment_gateways"
 app_title = "SL Payment Gateways"

@@ -17,16 +17,45 @@ def build_checkout(order_id: str, amount: str, currency: str, customer: dict) ->
     """Returns {"method": "POST"|"GET", "checkout_url": "...", "fields": {...}}"""
 
 def verify_response(form_dict) -> dict:
-    """Verifies a gateway's response and returns {"order_id", "status", "raw"}"""
+    """Verifies a response, returns {"order_id", "status", "amount", "currency", "raw"}"""
 ```
 
 [`sl_payment_gateways/api.py`](sl_payment_gateways/api.py) dispatches to whichever gateway is named, via three whitelisted methods:
 
 - `sl_payment_gateways.api.list_gateways` — names of gateways with a real implementation (for building a "Pay with X" UI).
-- `sl_payment_gateways.api.create_payment` — `(gateway, order_id, amount, currency, **customer)` → checkout details.
-- `sl_payment_gateways.api.payment_return` — `(gateway)` → verifies and parses the gateway's response (reads the rest from `frappe.form_dict`).
+- `sl_payment_gateways.api.create_payment` — `(gateway, order_id, amount, currency, **customer)` → checkout details. **Not a public endpoint**: it refuses to run when it is the method the HTTP request called, so it can only be reached *through* your own whitelisted method. See [Security model](#security-model).
+- `sl_payment_gateways.api.payment_return` — `(gateway)` → verifies and parses the gateway's response (reads the rest from `frappe.form_dict`). Guest-reachable, and safe to be: it verifies cryptographically and changes no state.
 
 Adding a new gateway means writing one new module and adding one line to `api.py`'s `GATEWAYS` dict — nothing else changes.
+
+## Security model
+
+Read this before wiring anything up. The short version: **this app proves a message came from the gateway. Everything else is yours to check.**
+
+### `create_payment` must not be reachable from a browser
+
+`create_payment()` signs a checkout for whatever `amount` it is handed — it cannot know what your orders cost — and for WebXPay it returns the merchant `secret_key` in the form fields, because WebXPay's integration posts that from the browser. If it were reachable at `/api/method/sl_payment_gateways.api.create_payment`, any logged-in user could price their own order at `1.00` and read the credential out of the response.
+
+Frappe only lets a Server Script reach a function through `frappe.call()` if it is `@frappe.whitelist()`'d, so the decorator can't just be removed. Instead `create_payment()` checks whether it is itself the endpoint the request invoked — via Frappe's `form_dict["cmd"]`, and again via the request path as a backstop — and refuses if so. A nested call from your own whitelisted method runs with *your* method's `cmd` still in place and is allowed.
+
+**What this means for you:** derive the amount server-side from your own records, after checking that the caller owns the order and that it isn't already paid — then call `create_payment`. Never pass an amount that came from the request.
+
+### What `verify_response` does and does not prove
+
+It proves the payload was signed by the gateway. It does **not** prove:
+
+| | |
+|---|---|
+| the order exists, is unsettled, or was set up for this gateway | nothing here reads your records — check it yourself |
+| the right amount was paid | compare `result["amount"]` / `result["currency"]` against your own price. WebXPay reports `None` — its response carries no amount, so confirm the figure in the WebXPay dashboard |
+| this isn't a replay | none of these gateways sends a nonce. Make your handler idempotent and ignore responses for already-settled orders |
+| your merchant account was credited (WebXPay) | WebXPay signs with its own key, not a per-merchant one, and its response has no merchant id. Only accept responses for orders you actually put into a pending state |
+
+PayHere's `md5sig` covers merchant id, order id, amount, currency and status, and the merchant id is checked against your settings — so PayHere notifications are bound to your account. WebXPay's are not.
+
+### Input handling
+
+`order_id`, `amount` and `currency` are validated in [`utils.py`](sl_payment_gateways/utils.py) before they reach any signing code. The pipe character is rejected in `order_id` in particular: WebXPay's payment string is `order_id|amount`, so a pipe would let the caller control the amount field the gateway parses. Amounts go through `Decimal` with `ROUND_HALF_UP`, never `float`. Signature comparisons are constant-time.
 
 ## Installation
 
@@ -64,7 +93,7 @@ The app has no settings UI of its own — each gateway module reads its credenti
    - `Use Sandbox` (Check, default 1)
 2. Fill it in from your PayHere merchant dashboard (sandbox: `sandbox.payhere.lk`, live: `payhere.lk`).
 
-PayHere takes `notify_url`/`return_url`/`cancel_url` per request (set automatically by `gateways/payhere.py`), so there's no dashboard-side return URL to configure.
+PayHere takes `notify_url`/`return_url`/`cancel_url` per request, so there's no dashboard-side return URL to configure — you pass them to `create_payment` instead (see [Wiring it up](#wiring-it-up-in-your-own-app)). All three must resolve to your own site; off-site values are rejected.
 
 Restrict both Settings DocTypes to System Manager only — they hold live credentials.
 
@@ -72,19 +101,38 @@ Restrict both Settings DocTypes to System Manager only — they hold live creden
 
 This app deliberately doesn't touch your business logic (order validation, pricing, what "paid" means for your DocType) — that stays in your own Server Scripts or app code. A minimal integration is two endpoints:
 
-**Start a checkout:**
+**Start a checkout** — note that every check happens *before* the call, and the amount is read from your own records, never from the request:
 ```python
-checkout = frappe.call(
-    function="sl_payment_gateways.api.create_payment",
-    gateway="WebXPay",          # or "PayHere"
-    order_id="SO-00001",        # your own reference
-    amount="1500.00",
-    currency="LKR",
-    first_name="...", last_name="...", email="...", contact_number="...",
-)
-# checkout = {"method": "POST", "checkout_url": "...", "fields": {...}}
+@frappe.whitelist()
+def my_create_payment():
+    order = frappe.get_doc("My Order", frappe.form_dict.get("order"))
+
+    # Your rules: who may pay for this, is it still unpaid, what does it cost.
+    if order.owner != frappe.session.user:
+        frappe.throw("You can only pay for your own order.")
+    if order.payment_status == "Paid":
+        frappe.throw("Already paid.")
+
+    amount = "%.2f" % order.grand_total     # from the database, not the caller
+
+    return frappe.call(
+        function="sl_payment_gateways.api.create_payment",
+        gateway=frappe.form_dict.get("gateway"),   # "WebXPay" or "PayHere"
+        order_id=order.name,
+        amount=amount,
+        currency="LKR",
+        first_name="...", last_name="...", email="...", contact_number="...",
+        # PayHere reads these per request; all three must be on this site.
+        notify_url="/api/method/my_app.api.my_payment_return?gateway=PayHere",
+        return_url="/app/my-order/%s" % order.name,
+        cancel_url="/app/my-order/%s" % order.name,
+        items="Registration fee (%s)" % order.name,
+    )
+# returns {"method": "POST", "checkout_url": "...", "fields": {...}}
 # render an auto-submitting form (POST) or redirect (GET) with these
 ```
+
+`notify_url` is **required** for PayHere and must point at your own handler — the one that actually settles the order. Pointing it at `sl_payment_gateways.api.payment_return` verifies the payload and then discards it, leaving every payment unrecorded.
 
 **Handle the return** (register this as your own whitelisted, `allow_guest=True` method — gateways call it directly with no session/CSRF token, which is safe because `verify_response()` cryptographically verifies the payload before trusting anything):
 ```python
@@ -92,9 +140,35 @@ checkout = frappe.call(
 def my_payment_return():
     gateway = frappe.form_dict.get("gateway")
     result = frappe.call(function="sl_payment_gateways.api.payment_return", gateway=gateway)
-    # result = {"order_id": "...", "status": "Paid"|"Failed"|"Pending", "raw": {...}}
-    # update your own order/invoice doctype here
+    # result = {"order_id", "status": "Paid"|"Failed"|"Pending", "amount", "currency", "raw"}
+
+    order = frappe.get_doc("My Order", result["order_id"])
+
+    if order.payment_status == "Paid":
+        return                      # replay of an already-settled order
+
+    status = result["status"]
+
+    # `amount` is None for WebXPay - its response carries no amount to check.
+    if status == "Paid" and result["amount"]:
+        if result["amount"] != ("%.2f" % order.grand_total) or result["currency"] != "LKR":
+            frappe.log_error(title="Payment amount mismatch", message=str(result))
+            status = "Failed"
+
+    order.db_set("payment_status", status)
 ```
+
+The [`payment/gateway/`](../payment/gateway/) scripts in this project are a working version of exactly this pair.
+
+## Tests
+
+The suite stubs Frappe ([`tests/frappe_stub.py`](tests/frappe_stub.py)), so it runs with plain `pytest` — no bench, site or database:
+
+```bash
+pip install -e ".[dev]" && pytest
+```
+
+391 tests covering the RSA/PKCS#1 implementation against a real keypair, PayHere's hash scheme against an independently written reference, tampering and forgery attempts on both, and seeded fuzzing that asserts hostile input can never come back as `Paid` and never escapes as an unhandled exception.
 
 That `my_payment_return` endpoint's URL (with `?gateway=WebXPay` or `?gateway=PayHere` appended) is what goes into WebXPay's dashboard return URL / PayHere's `notify_url` above. If you're doing this as Desk-pasted Server Scripts rather than app code, an API-type Server Script with `Allow Guest` checked works the same way — see this project's worked example (a full ERPNext Slot Allocation payment flow built on this app) for a concrete pattern to copy.
 
