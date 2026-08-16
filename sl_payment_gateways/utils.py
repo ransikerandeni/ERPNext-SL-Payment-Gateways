@@ -136,6 +136,62 @@ def decode_utf8(raw, label):
 		frappe.throw("Malformed %s: not valid UTF-8." % (label,))
 
 
+def is_sandbox(settings):
+	"""True when a Settings doctype is in sandbox/test mode."""
+	return bool(settings.get("use_sandbox"))
+
+
+def _mode_label(sandbox):
+	return "Sandbox" if sandbox else "Live"
+
+
+def _missing(settings, base, prefix, sandbox):
+	frappe.throw(
+		"%s is not configured for %s mode: set `%s%s`. "
+		"(The legacy field `%s` is still read if present, for setups that "
+		"predate separate sandbox/live credentials.)"
+		% (settings.doctype, _mode_label(sandbox), prefix, base, base)
+	)
+
+
+def mode_value(settings, base, sandbox):
+	"""Read the credential for the active mode: `sandbox_x` or `live_x`.
+
+	Sandbox and live are genuinely different accounts at both gateways -
+	PayHere's sandbox is a separate deployment with its own merchant id and
+	secret, and WebXPay's staging portal issues its own key pair - so
+	storing one set and overwriting it on every switch loses the other and
+	invites going live against test credentials.
+
+	Falls back to the unprefixed field so existing single-set
+	configurations keep working. It never falls back to the *other* mode's
+	field: a missing live credential must fail, not quietly reach for the
+	sandbox one.
+	"""
+	prefix = "sandbox_" if sandbox else "live_"
+
+	value = settings.get(prefix + base) or settings.get(base)
+
+	if not value:
+		_missing(settings, base, prefix, sandbox)
+
+	return value
+
+
+def mode_password(settings, base, sandbox):
+	"""mode_value() for Password fields, which need get_password()."""
+	prefix = "sandbox_" if sandbox else "live_"
+
+	value = settings.get_password(prefix + base, raise_exception=False) or settings.get_password(
+		base, raise_exception=False
+	)
+
+	if not value:
+		_missing(settings, base, prefix, sandbox)
+
+	return value
+
+
 def constant_time_equals(a, b):
 	"""Timing-safe comparison of two text values.
 

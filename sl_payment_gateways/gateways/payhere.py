@@ -1,9 +1,13 @@
 """PayHere (payhere.lk) - Checkout API.
 
 MD5-hash based (not RSA) - simpler than WebXPay, but still needs real
-`hashlib`, which Server Scripts can't import either. Settings
-(merchant_id, merchant_secret, sandbox toggle) live in the "PayHere
-Settings" single doctype.
+`hashlib`, which Server Scripts can't import either.
+
+Credentials live in the "PayHere Settings" single doctype. Sandbox is a
+completely separate PayHere deployment with its own merchant account -
+a sandbox account cannot be converted to a live one, and neither set of
+credentials works against the other environment - so the doctype holds
+both pairs and `use_sandbox` selects which is used. See docs/payhere.md.
 
 PayHere has two separate callbacks: `notify_url` is a genuine
 server-to-server webhook (authoritative - carries the signed
@@ -37,6 +41,9 @@ from sl_payment_gateways.utils import (
 	clean_text,
 	constant_time_equals,
 	format_amount,
+	is_sandbox,
+	mode_password,
+	mode_value,
 	site_url,
 	validate_currency,
 	validate_order_id,
@@ -44,6 +51,11 @@ from sl_payment_gateways.utils import (
 
 # PayHere's API documents order_id as up to 50 characters.
 MAX_ORDER_ID_LENGTH = 50
+
+# Sandbox is a wholly separate PayHere deployment with its own merchant
+# account - credentials from one never work against the other.
+SANDBOX_CHECKOUT_URL = "https://sandbox.payhere.lk/pay/checkout"
+LIVE_CHECKOUT_URL = "https://www.payhere.lk/pay/checkout"
 
 STATUS_BY_CODE = {
 	"2": "Paid",
@@ -65,23 +77,17 @@ REQUIRED_RESPONSE_FIELDS = (
 
 def _settings():
 	try:
-		settings = frappe.get_doc("PayHere Settings")
+		return frappe.get_doc("PayHere Settings")
 	except frappe.DoesNotExistError:
 		frappe.throw("PayHere Settings doctype does not exist - create it before using PayHere.")
 
-	if not settings.merchant_id:
-		frappe.throw("PayHere Settings is not configured (no Merchant ID).")
 
-	return settings
+def _merchant_id(settings):
+	return str(mode_value(settings, "merchant_id", is_sandbox(settings)))
 
 
 def _merchant_secret(settings):
-	secret = settings.get_password("merchant_secret", raise_exception=False)
-
-	if not secret:
-		frappe.throw("PayHere Settings is not configured (no Merchant Secret).")
-
-	return secret
+	return mode_password(settings, "merchant_secret", is_sandbox(settings))
 
 
 # MD5 below is not a choice: PayHere's Checkout API defines its hash and
@@ -100,7 +106,7 @@ def build_checkout(order_id, amount, currency, customer):
 	currency = validate_currency(currency)
 
 	settings = _settings()
-	merchant_id = str(settings.merchant_id)
+	merchant_id = _merchant_id(settings)
 
 	# Where PayHere's authoritative webhook goes. No default: silently
 	# falling back to this app's own payment_return would verify the
@@ -117,9 +123,7 @@ def build_checkout(order_id, amount, currency, customer):
 		% (merchant_id, order_id, amount_str, currency, _secret_hash(_merchant_secret(settings)))
 	)
 
-	checkout_url = (
-		"https://sandbox.payhere.lk/pay/checkout" if settings.use_sandbox else "https://www.payhere.lk/pay/checkout"
-	)
+	checkout_url = SANDBOX_CHECKOUT_URL if is_sandbox(settings) else LIVE_CHECKOUT_URL
 
 	return {
 		"method": "POST",
@@ -165,7 +169,9 @@ def verify_response(form_dict):
 
 	settings = _settings()
 
-	if not constant_time_equals(merchant_id, settings.merchant_id):
+	# Binds the notification to the account for the *active* mode: a
+	# sandbox notification replayed at a live site fails here.
+	if not constant_time_equals(merchant_id, _merchant_id(settings)):
 		frappe.throw("PayHere merchant_id mismatch.")
 
 	expected = _md5_upper(
@@ -192,5 +198,9 @@ def verify_response(form_dict):
 		# recorded" - the caller still has to check them against the order.
 		"amount": payhere_amount,
 		"currency": payhere_currency,
+		# True: md5sig is keyed on our own merchant secret and covers the
+		# merchant id, which was checked above - so this notification is
+		# provably for our account, in the currently active mode.
+		"merchant_verified": True,
 		"raw": dict(form_dict),
 	}

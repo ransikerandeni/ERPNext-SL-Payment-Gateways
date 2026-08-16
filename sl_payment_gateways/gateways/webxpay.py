@@ -12,10 +12,16 @@ OPENSSL_PKCS1_PADDING (PKCS#1 v1.5) - block type 0x02 for encryption,
 block type 0x01 for the signature-style public-decrypt. That's what's
 implemented below.
 
-NOTE: the response field order below is based on WebXPay's worked
-example on their Redirect Integration guide page, not a fully confirmed
-reading of their sample code - verify against your actual downloaded
-php-response.txt before relying on this for real transactions.
+Response format: confirmed against WebXPay's Redirect Integration guide
+(developers.webxpay.com/Guides/Redirect-Integration), which documents the
+decoded payment string as
+order_id|order_reference_number|date_time_transaction|status_code|comment|payment_gateway_used
+and status codes 0/00 = approved, 15 = declined.
+
+Sandbox and live are separate WebXPay portals (stagingxpay.info and
+webxpay.com) with separate merchant accounts and separate key pairs, so
+"WebXPay Settings" holds both sets and `use_sandbox` picks one - see
+docs/webxpay.md.
 
 RESIDUAL RISKS you must handle in your own return handler
 ---------------------------------------------------------
@@ -45,6 +51,9 @@ from sl_payment_gateways.utils import (
 	constant_time_equals,
 	decode_utf8,
 	format_amount,
+	is_sandbox,
+	mode_password,
+	mode_value,
 	validate_currency,
 	validate_order_id,
 )
@@ -62,6 +71,10 @@ RESPONSE_FIELDS = (
 
 SUCCESS_STATUS_CODES = ("0", "00")
 
+# Separate portals, separate merchant accounts, separate key pairs.
+SANDBOX_CHECKOUT_URL = "https://stagingxpay.info/index.php?route=checkout/billing"
+LIVE_CHECKOUT_URL = "https://webxpay.com/index.php?route=checkout/billing"
+
 # PKCS#1 v1.5 requires at least 8 padding bytes. Enforcing it on the way
 # back out rejects short-padding forgeries rather than trusting whatever
 # structure the sender chose.
@@ -70,33 +83,30 @@ MIN_PADDING_LEN = 8
 
 def _settings():
 	try:
-		settings = frappe.get_doc("WebXPay Settings")
+		return frappe.get_doc("WebXPay Settings")
 	except frappe.DoesNotExistError:
 		frappe.throw("WebXPay Settings doctype does not exist - create it before using WebXPay.")
 
-	if not settings.public_key:
-		frappe.throw("WebXPay Settings is not configured (no Public Key).")
-
-	return settings
-
 
 def _secret_key(settings):
-	"""Read the merchant secret. Kept out of _settings() so that
-	verify_response() - which is reachable by guests - never has to touch
-	the credential store at all."""
-	secret = settings.get_password("secret_key", raise_exception=False)
-
-	if not secret:
-		frappe.throw("WebXPay Settings is not configured (no Secret Key).")
-
-	return secret
+	"""Read the merchant secret for the active mode. Kept out of
+	_settings() so that verify_response() - which is reachable by guests -
+	never has to touch the credential store at all."""
+	return mode_password(settings, "secret_key", is_sandbox(settings))
 
 
 def _public_key(settings):
+	"""Staging and production are separate WebXPay portals issuing separate
+	key pairs, so the mode decides which one verifies a response."""
+	pem = mode_value(settings, "public_key", is_sandbox(settings))
+
 	try:
-		return RSA.import_key(settings.public_key)
+		return RSA.import_key(pem)
 	except (ValueError, IndexError, TypeError):
-		frappe.throw("WebXPay Settings holds an unreadable RSA public key.")
+		frappe.throw(
+			"WebXPay Settings holds an unreadable RSA public key for %s mode."
+			% ("Sandbox" if is_sandbox(settings) else "Live",)
+		)
 
 
 def _i2osp(n, length):
@@ -174,11 +184,7 @@ def build_checkout(order_id, amount, currency, customer):
 	ciphertext = _rsa_encrypt_pkcs1_type2(plaintext, key)
 	payment_field = base64.b64encode(ciphertext).decode("ascii")
 
-	checkout_url = (
-		"https://stagingxpay.info/index.php?route=checkout/billing"
-		if settings.use_sandbox
-		else "https://webxpay.com/index.php?route=checkout/billing"
-	)
+	checkout_url = SANDBOX_CHECKOUT_URL if is_sandbox(settings) else LIVE_CHECKOUT_URL
 
 	return {
 		"method": "POST",
@@ -247,5 +253,10 @@ def verify_response(form_dict):
 		# assuming there was nothing to check.
 		"amount": None,
 		"currency": None,
+		# False: WebXPay signs with its own key, not a per-merchant one, and
+		# the response carries no merchant id - so a valid signature does not
+		# prove *our* account was credited. Callers must not settle an order
+		# on this alone; see the residual risks above.
+		"merchant_verified": False,
 		"raw": parsed,
 	}

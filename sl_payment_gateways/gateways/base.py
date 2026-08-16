@@ -54,8 +54,22 @@ def verify_response(form_dict) -> dict:
 			"status": "Paid" | "Failed" | "Pending",
 			"amount": "1500.00" | None,   # None if the gateway omits it
 			"currency": "LKR" | None,
+			"merchant_verified": True | False,
 			"raw": {...},         # parsed gateway response, for logging
 		}
+
+	`merchant_verified` is a property of the *protocol*, not of this
+	particular payload: True means a successful verification proves the
+	payment was made to our own merchant account, because the signature
+	is keyed on a secret only we hold (PayHere's md5sig). False means it
+	does not - the gateway signs with a key shared across merchants and
+	sends no merchant identifier, so any of its merchants could produce a
+	validly signed response for an arbitrary order id (WebXPay).
+
+	Callers use it to decide how much the signature alone is worth. With
+	False, a verified response must be corroborated against local state -
+	e.g. that this order was actually put into a pending state for this
+	gateway - before any money is considered received.
 
 	What a successful return does NOT establish, and what every caller
 	therefore still has to check for itself:

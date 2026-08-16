@@ -5,7 +5,7 @@ import pytest
 import frappe
 from sl_payment_gateways.gateways import webxpay
 
-from .conftest import WEBXPAY_SECRET
+from .conftest import WEBXPAY_SANDBOX_SECRET
 
 GOOD_RESPONSE = "SO-0001|WX-REF-99|2026-08-14 10:00:00|00|Approved|VISA"
 
@@ -70,10 +70,10 @@ class TestBuildCheckout:
 	def test_secret_key_is_included_for_the_gateway_form(self, webxpay_settings):
 		# WebXPay's integration genuinely requires this in the POST body.
 		# Guarded by create_payment() not being a public endpoint.
-		assert webxpay.build_checkout("SO-1", "1.00", "LKR", {})["fields"]["secret_key"] == WEBXPAY_SECRET
+		assert webxpay.build_checkout("SO-1", "1.00", "LKR", {})["fields"]["secret_key"] == WEBXPAY_SANDBOX_SECRET
 
 	def test_unconfigured_settings_throw(self, webxpay_settings):
-		webxpay_settings["public_key"] = None
+		webxpay_settings["sandbox_public_key"] = None
 		with pytest.raises(frappe.ValidationError):
 			webxpay.build_checkout("SO-1", "1.00", "LKR", {})
 
@@ -138,7 +138,7 @@ class TestVerifyResponse:
 		from Crypto.PublicKey import RSA
 
 		signed = sign_webxpay(GOOD_RESPONSE)
-		webxpay_settings["public_key"] = RSA.generate(2048).publickey().export_key().decode()
+		webxpay_settings["sandbox_public_key"] = RSA.generate(2048).publickey().export_key().decode()
 
 		with pytest.raises(frappe.ValidationError):
 			webxpay.verify_response(frappe._dict(signed))
@@ -199,6 +199,16 @@ class TestVerifyResponse:
 
 		assert result["amount"] is None
 		assert result["currency"] is None
+
+	def test_reports_that_the_signature_does_not_prove_our_merchant(
+		self, webxpay_settings, sign_webxpay
+	):
+		# WebXPay signs with a key shared across merchants and sends no
+		# merchant id, so a valid signature is not proof our account was
+		# credited. Callers must corroborate against local state.
+		result = webxpay.verify_response(frappe._dict(sign_webxpay(GOOD_RESPONSE)))
+
+		assert result["merchant_verified"] is False
 
 	def test_verification_does_not_read_the_secret_key(self, webxpay_settings, sign_webxpay):
 		# verify_response is guest-reachable; it has no business touching

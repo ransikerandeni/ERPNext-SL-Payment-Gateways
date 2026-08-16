@@ -3,8 +3,6 @@ import pytest
 import frappe
 from sl_payment_gateways import api
 
-from .conftest import PAYHERE_MERCHANT_ID  # noqa: F401  (fixtures use it)
-
 CREATE_PAYMENT_CMD = "sl_payment_gateways.api.create_payment"
 NOTIFY = "/api/method/gateway_payment_return?gateway=PayHere"
 
@@ -29,6 +27,36 @@ class TestGatewayDispatch:
 				api.GATEWAYS[name].build_checkout("SO-1", "1.00", "LKR", {})
 			with pytest.raises(frappe.ValidationError, match="not yet configured"):
 				api.GATEWAYS[name].verify_response(frappe._dict({}))
+
+	def test_verify_response_returns_the_full_contract(
+		self, payhere_settings, payhere_notification, webxpay_settings, sign_webxpay
+	):
+		# Every implemented gateway must return the same key set, so a
+		# caller can read result["amount"] / result["merchant_verified"]
+		# without knowing which gateway answered.
+		expected_keys = {"order_id", "status", "amount", "currency", "merchant_verified", "raw"}
+
+		frappe.local.form_dict = payhere_notification()
+		assert set(api.payment_return("PayHere")) == expected_keys
+
+		frappe.local.form_dict = frappe._dict(
+			sign_webxpay("SO-0001|REF|2026-08-14|00|Approved|VISA")
+		)
+		assert set(api.payment_return("WebXPay")) == expected_keys
+
+	def test_merchant_verified_reflects_the_protocol(
+		self, payhere_settings, payhere_notification, webxpay_settings, sign_webxpay
+	):
+		# PayHere's md5sig is keyed on our own secret; WebXPay's signature
+		# is not. Callers rely on this to decide how much a valid
+		# signature is worth on its own.
+		frappe.local.form_dict = payhere_notification()
+		assert api.payment_return("PayHere")["merchant_verified"] is True
+
+		frappe.local.form_dict = frappe._dict(
+			sign_webxpay("SO-0001|REF|2026-08-14|00|Approved|VISA")
+		)
+		assert api.payment_return("WebXPay")["merchant_verified"] is False
 
 	def test_unknown_gateway_throws(self):
 		with pytest.raises(frappe.ValidationError, match="Unknown payment gateway"):

@@ -5,7 +5,7 @@ import pytest
 import frappe
 from sl_payment_gateways.gateways import payhere
 
-from .conftest import PAYHERE_MERCHANT_ID, PAYHERE_SECRET
+from .conftest import PAYHERE_SANDBOX_MERCHANT_ID, PAYHERE_SANDBOX_SECRET
 
 NOTIFY = "/api/method/gateway_payment_return?gateway=PayHere"
 
@@ -25,7 +25,7 @@ class TestBuildCheckout:
 		)["fields"]
 
 		assert fields["hash"] == reference_checkout_hash(
-			PAYHERE_MERCHANT_ID, "SO-0001", "1500.00", "LKR", PAYHERE_SECRET
+			PAYHERE_SANDBOX_MERCHANT_ID, "SO-0001", "1500.00", "LKR", PAYHERE_SANDBOX_SECRET
 		)
 
 	def test_amount_is_normalised_and_hashed_consistently(self, payhere_settings):
@@ -33,7 +33,7 @@ class TestBuildCheckout:
 
 		assert fields["amount"] == "1500.50"
 		assert fields["hash"] == reference_checkout_hash(
-			PAYHERE_MERCHANT_ID, "SO-1", "1500.50", "LKR", PAYHERE_SECRET
+			PAYHERE_SANDBOX_MERCHANT_ID, "SO-1", "1500.50", "LKR", PAYHERE_SANDBOX_SECRET
 		)
 
 	def test_notify_url_is_required(self, payhere_settings):
@@ -87,13 +87,13 @@ class TestBuildCheckout:
 		)["checkout_url"]
 
 	def test_unconfigured_settings_throw(self, payhere_settings):
-		payhere_settings["merchant_id"] = None
+		payhere_settings["sandbox_merchant_id"] = None
 		with pytest.raises(frappe.ValidationError, match="not configured"):
 			payhere.build_checkout("SO-1", "1.00", "LKR", {"notify_url": NOTIFY})
 
 	def test_missing_secret_throws(self, payhere_settings):
 		object.__setattr__(payhere_settings, "_passwords", {})
-		with pytest.raises(frappe.ValidationError, match="Merchant Secret"):
+		with pytest.raises(frappe.ValidationError, match="sandbox_merchant_secret"):
 			payhere.build_checkout("SO-1", "1.00", "LKR", {"notify_url": NOTIFY})
 
 	def test_missing_doctype_throws_clearly(self):
@@ -110,6 +110,7 @@ class TestVerifyResponse:
 			"status": "Paid",
 			"amount": "1500.00",
 			"currency": "LKR",
+			"merchant_verified": True,
 			"raw": dict(payhere_notification()),
 		}
 

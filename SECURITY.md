@@ -208,14 +208,15 @@ Documented at the top of `webxpay.py`.
 PayHere is not affected: its `md5sig` is keyed on your merchant secret
 and covers the merchant id, which is checked against your settings.
 
-### R2. WebXPay's response format is unconfirmed
+### ~~R2. WebXPay's response format is unconfirmed~~ — resolved
 
-The six-field order is taken from WebXPay's worked example on their
-Redirect Integration guide, not from their sample code. If the real order
-differs, `status_code` is read from the wrong position. Verify against
-your downloaded `php-response.txt` before going live. (Pre-existing note,
-retained — the strict field-count check in M6 at least turns a
-format mismatch into a loud error rather than a silent `Failed`.)
+Checked against WebXPay's Redirect Integration guide
+(developers.webxpay.com/Guides/Redirect-Integration), which documents the
+decoded response as
+`order_id|order_reference_number|date_time_transaction|status_code|comment|payment_gateway_used`
+and status codes `0`/`00` = approved, `15` = declined. That is what
+`webxpay.py` implements. The strict field-count check from M6 turns any
+future format change into a loud error rather than a silent `Failed`.
 
 ### R3. Replay is possible within the "unsettled" window
 
@@ -239,6 +240,116 @@ genuine webhook retry.
 Fixed by PayHere's API. Nothing to do from this side.
 
 ---
+
+## Follow-up hardening — separate sandbox and live credentials
+
+Not a vulnerability in the original code, but a foreseeable way to create
+one. Both Settings doctypes held a *single* credential set with a
+`use_sandbox` checkbox that changed only the checkout URL. Since sandbox
+and live are entirely separate merchant accounts at both gateways
+(PayHere's sandbox is a separate deployment that cannot be converted to a
+live account; WebXPay's staging portal issues its own RSA key pair),
+switching environments meant overwriting the other set — so the obvious
+failure mode was going live while still signing with test credentials, or
+pointing a live return URL at a staging account.
+
+Each doctype now holds both sets (`sandbox_*` / `live_*`) with
+`use_sandbox` selecting one, and the code enforces that:
+
+- mode switches checkout URL, merchant identity and signing credentials
+  together, never partially;
+- a missing credential throws naming that exact field and mode, and never
+  falls back to the other environment's value;
+- cross-environment payloads are rejected — a sandbox response fails
+  verification in live mode and vice versa (WebXPay on the key pair,
+  PayHere on the merchant id).
+
+Pre-split configurations still work: the unprefixed field is read when
+the mode-specific one is empty. Covered by `tests/test_modes.py`.
+Operator-facing guides: [docs/webxpay.md](docs/webxpay.md),
+[docs/payhere.md](docs/payhere.md).
+
+## QA pass — end-to-end flow, Server Scripts and UI
+
+A separate pass over the whole payment journey, not just this app. Four
+real defects, all fixed.
+
+### Q1. A paid order could go unrecorded when the participant switched gateway
+
+`create_gateway_payment` overwrites `payment_gateway` on every click, and
+`gateway_payment_return` rejected any response whose gateway didn't match
+it. So: open WebXPay, change your mind, click PayHere, then go back and
+complete the WebXPay window — the participant is charged, the return is
+rejected with an error page, and nothing records that money arrived.
+
+**Fixed** on three levels:
+
+- `verify_response()` now reports `merchant_verified` — whether the
+  gateway's signature proves the payment reached *our* merchant account.
+  True for PayHere (md5sig keyed on our secret, merchant id checked),
+  False for WebXPay (shared signing key, no merchant id). This is a
+  property of the protocol, so it belongs in the gateway module rather
+  than being re-derived by every caller.
+- `gateway_payment_return` settles a mismatched-but-merchant-verified
+  response normally, and for an unverifiable one logs "Gateway payment
+  needs manual reconciliation" instead of throwing — the customer no
+  longer gets an error after being charged, and an admin gets a record
+  to reconcile from.
+- The client script warns before starting a second gateway while one is
+  pending, so the situation mostly stops arising.
+
+### Q2. The error handler was itself broken
+
+`gateway_payment_return`'s `except` block called `frappe.get_traceback()`,
+which **is not exposed in Frappe's Server Script sandbox**
+(`frappe/utils/safe_exec.py`). Every verification failure therefore raised
+a second time inside the handler, so the `Error Log` entry was never
+written and the friendly "Could not verify payment response" never
+appeared — exactly when someone would be trying to debug a failed payment.
+
+**Fixed** — logs the exception message and the payload's field names
+instead. A scan of all seven Server Scripts for other sandbox-unavailable
+`frappe.*` calls found none.
+
+### Q3. Silent failures in the payment UI
+
+Clicking "Pay Now" and getting an empty response from the server closed
+the popup and said *nothing at all* — the form sat unchanged and the
+participant had no idea whether they had paid. Same for PayPal returning
+no `payment_url`. The popup-blocked branch was also unreachable in one
+path. **Fixed** — every failure path now names what went wrong and what
+to do next, and the popup is checked before any server call.
+
+### Q4. Payment popup looked broken while it loaded
+
+The window opened blank (correctly — it must open synchronously or popup
+blockers kill it) and stayed blank white next to a frozen form until the
+gateway loaded. **Fixed** — a "Redirecting to <gateway>…" placeholder is
+written immediately.
+
+### Also fixed in the same pass
+
+- `refresh()` issued **two** separate Payment Request queries per form
+  load; merged into one. It also chained the two lookups, so "Pay Now"
+  only appeared after two sequential round trips — now parallel, and the
+  constant gateway list is cached instead of re-fetched on every refresh.
+- A settled gateway order now skips the Payment Request query entirely
+  and paints its status banner synchronously.
+- Only the *latest* Payment Request was checked for "already paid"; an
+  older Paid one behind a newer Failed one would have re-offered payment.
+- `null` field values reached the gateway form as the string
+  `"undefined"`.
+- Status text is HTML-escaped before going into the banner.
+- `paid_via_webxpay` renamed to `paid_via_gateway` — stale from before
+  the app was multi-gateway, and it gates submission for all of them.
+
+### QA coverage added
+
+`slot_allocation/client_script.test.js` — 35 headless checks driving the
+Client Script against a stubbed Frappe, covering the paths that are
+awkward to reproduce by hand (popup blocked, empty server response,
+gateway switch, an older Paid request, XSS in the status banner). Runs
+with `node slot_allocation/client_script.test.js`, no dependencies.
 
 ## Also verified as sound
 

@@ -83,7 +83,9 @@ def build_module(site_url="https://erp.example.com"):
 	def get_doc(doctype, *args, **kwargs):
 		if doctype not in frappe.test_docs:
 			raise DoesNotExistError(doctype)
-		return frappe.test_docs[doctype]
+		doc = frappe.test_docs[doctype]
+		doc.setdefault("doctype", doctype)
+		return doc
 
 	def whitelist(allow_guest=False, methods=None):
 		def decorator(fn):

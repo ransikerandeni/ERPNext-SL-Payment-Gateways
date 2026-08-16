@@ -17,7 +17,8 @@ def build_checkout(order_id: str, amount: str, currency: str, customer: dict) ->
     """Returns {"method": "POST"|"GET", "checkout_url": "...", "fields": {...}}"""
 
 def verify_response(form_dict) -> dict:
-    """Verifies a response, returns {"order_id", "status", "amount", "currency", "raw"}"""
+    """Verifies a response, returns
+    {"order_id", "status", "amount", "currency", "merchant_verified", "raw"}"""
 ```
 
 [`sl_payment_gateways/api.py`](sl_payment_gateways/api.py) dispatches to whichever gateway is named, via three whitelisted methods:
@@ -49,7 +50,7 @@ It proves the payload was signed by the gateway. It does **not** prove:
 | the order exists, is unsettled, or was set up for this gateway | nothing here reads your records — check it yourself |
 | the right amount was paid | compare `result["amount"]` / `result["currency"]` against your own price. WebXPay reports `None` — its response carries no amount, so confirm the figure in the WebXPay dashboard |
 | this isn't a replay | none of these gateways sends a nonce. Make your handler idempotent and ignore responses for already-settled orders |
-| your merchant account was credited (WebXPay) | WebXPay signs with its own key, not a per-merchant one, and its response has no merchant id. Only accept responses for orders you actually put into a pending state |
+| your merchant account was credited | read `result["merchant_verified"]`. True (PayHere) means the signature is keyed on a secret only you hold, so it does prove this. False (WebXPay) means it does not — corroborate against local state before treating money as received |
 
 PayHere's `md5sig` covers merchant id, order id, amount, currency and status, and the merchant id is checked against your settings — so PayHere notifications are bound to your account. WebXPay's are not.
 
@@ -72,30 +73,40 @@ That's it for the app itself — `pycryptodome` (needed for WebXPay's RSA) insta
 
 ## Setup (per gateway)
 
-The app has no settings UI of its own — each gateway module reads its credentials from a small **Single DocType** you create once via Desk (**Setup → DocType → New**, check **Is Single**). This is a deliberate design choice: it keeps the app itself free of any schema/migration surface, and every field stays visible/editable in Desk like any other setting.
+**Full step-by-step guides, covering sandbox and live for each gateway:**
 
-### WebXPay
+| Gateway | Guide |
+|---|---|
+| WebXPay | **[docs/webxpay.md](docs/webxpay.md)** |
+| PayHere | **[docs/payhere.md](docs/payhere.md)** |
 
-1. Create DocType `WebXPay Settings` (Is Single), with fields:
-   - `Public Key` (Long Text)
-   - `Secret Key` (Password)
-   - `Use Sandbox` (Check, default 1)
-2. Fill it in from your WebXPay merchant dashboard (staging: `stagingxpay.info`, production: `webxpay.com`) — **Settings → Integrations** for the Secret Key, **Settings → Integration Information → Generate keys** for the RSA Public Key.
-3. In WebXPay's dashboard, under **Settings → Website Integration → Add Return URL**, set it to:
-   `https://<your-site>/api/method/<your_return_endpoint>?gateway=WebXPay`
-   (WebXPay only supports one fixed, sitewide return URL — see "Wiring it up" below for what `<your_return_endpoint>` should be.)
+Each covers creating the Settings DocType, getting credentials from the right portal, running test payments (including PayHere's sandbox test cards), switching to live, and troubleshooting every error this app can raise. Start there — the summary below is orientation only.
 
-### PayHere
+The app has no settings UI of its own: each gateway reads its credentials from a small **Single DocType** you create once via Desk (**Setup → DocType → New**, check **Is Single**). This keeps the app free of any schema/migration surface, and every field stays visible/editable in Desk like any other setting.
 
-1. Create DocType `PayHere Settings` (Is Single), with fields:
-   - `Merchant ID` (Data)
-   - `Merchant Secret` (Password)
-   - `Use Sandbox` (Check, default 1)
-2. Fill it in from your PayHere merchant dashboard (sandbox: `sandbox.payhere.lk`, live: `payhere.lk`).
+### Sandbox and live are separate accounts
 
-PayHere takes `notify_url`/`return_url`/`cancel_url` per request, so there's no dashboard-side return URL to configure — you pass them to `create_payment` instead (see [Wiring it up](#wiring-it-up-in-your-own-app)). All three must resolve to your own site; off-site values are rejected.
+Both gateways treat their test and production environments as **entirely separate merchant accounts** — PayHere's sandbox is a separate deployment that cannot be converted to a live account, and WebXPay's staging portal issues its own RSA key pair. So each Settings DocType holds **both** credential sets, and a `use_sandbox` checkbox selects which is used:
 
-Restrict both Settings DocTypes to System Manager only — they hold live credentials.
+```
+use_sandbox = 1  →  sandbox_*  fields  →  the gateway's test portal
+use_sandbox = 0  →  live_*     fields  →  the gateway's production portal
+```
+
+| DocType | Sandbox fields | Live fields | Switch |
+|---|---|---|---|
+| `WebXPay Settings` | `sandbox_public_key` (Long Text), `sandbox_secret_key` (Password) | `live_public_key`, `live_secret_key` | `use_sandbox` (Check) |
+| `PayHere Settings` | `sandbox_merchant_id` (Data), `sandbox_merchant_secret` (Password) | `live_merchant_id`, `live_merchant_secret` | `use_sandbox` (Check) |
+
+A missing credential fails loudly and names the exact field and mode — it never falls back to the other environment's:
+
+```
+PayHere Settings is not configured for Live mode: set `live_merchant_id`.
+```
+
+Configurations from before this split (plain `public_key` / `merchant_id` / …) keep working: the unprefixed field is used when the mode-specific one is empty.
+
+**Restrict both Settings DocTypes to System Manager only** — they hold live credentials.
 
 ## Wiring it up in your own app
 
@@ -160,6 +171,8 @@ def my_payment_return():
 
 The [`payment/gateway/`](../payment/gateway/) scripts in this project are a working version of exactly this pair.
 
+That `my_payment_return` endpoint's URL (with `?gateway=WebXPay` or `?gateway=PayHere` appended) is what goes into WebXPay's dashboard return URL / PayHere's `notify_url` above. If you're doing this as Desk-pasted Server Scripts rather than app code, an API-type Server Script with `Allow Guest` checked works the same way — see this project's worked example (a full ERPNext Slot Allocation payment flow built on this app) for a concrete pattern to copy.
+
 ## Tests
 
 The suite stubs Frappe ([`tests/frappe_stub.py`](tests/frappe_stub.py)), so it runs with plain `pytest` — no bench, site or database:
@@ -168,19 +181,23 @@ The suite stubs Frappe ([`tests/frappe_stub.py`](tests/frappe_stub.py)), so it r
 pip install -e ".[dev]" && pytest
 ```
 
-391 tests covering the RSA/PKCS#1 implementation against a real keypair, PayHere's hash scheme against an independently written reference, tampering and forgery attempts on both, and seeded fuzzing that asserts hostile input can never come back as `Paid` and never escapes as an unhandled exception.
+The Client Script driving this app has its own dependency-free harness, since a pasted-into-Desk script can otherwise only be tested by clicking through a browser:
 
-That `my_payment_return` endpoint's URL (with `?gateway=WebXPay` or `?gateway=PayHere` appended) is what goes into WebXPay's dashboard return URL / PayHere's `notify_url` above. If you're doing this as Desk-pasted Server Scripts rather than app code, an API-type Server Script with `Allow Guest` checked works the same way — see this project's worked example (a full ERPNext Slot Allocation payment flow built on this app) for a concrete pattern to copy.
+```bash
+node ../slot_allocation/client_script.test.js
+```
+
+415 tests covering the RSA/PKCS#1 implementation against a real keypair, PayHere's hash scheme against an independently written reference, tampering and forgery attempts on both, sandbox/live credential selection (including that a sandbox payload is rejected in live mode and vice versa), and seeded fuzzing that asserts hostile input can never come back as `Paid` and never escapes as an unhandled exception.
 
 ## Known open items
 
-- **WebXPay response field order is unconfirmed.** `gateways/webxpay.py`'s `verify_response` assumes `order_id|order_reference_number|date_time_transaction|status_code|comment|payment_gateway_used`, based on WebXPay's worked example on their integration guide — but their actual sample PHP file's field order wasn't fully confirmed. Verify against WebXPay's real `php-response.txt` before relying on this for live payments.
+- ~~WebXPay response field order is unconfirmed.~~ **Resolved.** WebXPay's Redirect Integration guide documents the decoded response as `order_id|order_reference_number|date_time_transaction|status_code|comment|payment_gateway_used`, with status `0`/`00` = approved and `15` = declined — which is what `gateways/webxpay.py` implements. A response with a different field count is now rejected outright rather than parsed as a decline.
 - Both `webxpay.py` and `payhere.py` send a placeholder address (`"N/A"`, or whatever `customer` dict field you pass as `organization`) — pass a real `address`/`city`/`country` through `customer` if your integration needs it.
 
 ## Adding a new gateway
 
 1. Write `sl_payment_gateways/gateways/<name>.py` implementing `build_checkout()` and `verify_response()` per the contract in `gateways/base.py` — `webxpay.py` (RSA) and `payhere.py` (MD5 hash) are worked examples of two different crypto schemes.
-2. Create a Settings DocType for its credentials, same pattern as above.
+2. Create a Settings DocType for its credentials, same pattern as above — with `sandbox_*` and `live_*` field pairs plus `use_sandbox`, read via `utils.mode_value()` / `utils.mode_password()`.
 3. Register the module in `sl_payment_gateways/api.py`'s `GATEWAYS` dict, and add its name to `IMPLEMENTED` once it's working.
 4. `bench update --pull` (or however you sync app updates on your bench), `bench restart`.
 
