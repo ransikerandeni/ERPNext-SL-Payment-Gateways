@@ -14,9 +14,9 @@
 #     'sl_payment_gateways.sl_payment_gateways'
 #
 # and the install aborts. Frappe then walks this folder for doctype/,
-# page/, report/ subfolders; this app deliberately ships none, so it
-# finds nothing and moves on - which is the intended outcome, not an
-# oversight.
+# page/, report/ subfolders. It finds doctype/, holding this app's two
+# Single DocTypes (WebXPay Settings, PayHere Settings) - see
+# doctype/webxpay_settings/ and doctype/payhere_settings/.
 #
-# Do not delete this file because the folder "looks empty". If you ever
-# do add a DocType to this app, it goes in a doctype/ subfolder here.
+# Do not delete this file - Frappe needs it to import the module even
+# though nothing here is referenced directly.

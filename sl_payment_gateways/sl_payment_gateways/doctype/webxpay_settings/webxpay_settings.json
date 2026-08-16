@@ -1,0 +1,83 @@
+{
+ "actions": [],
+ "creation": "2026-08-16 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "use_sandbox",
+  "sandbox_section",
+  "sandbox_public_key",
+  "sandbox_secret_key",
+  "live_section",
+  "live_public_key",
+  "live_secret_key"
+ ],
+ "fields": [
+  {
+   "default": "1",
+   "description": "Ticked = checkout goes through WebXPay's staging portal (stagingxpay.info). Untick only once the Live section below is fully configured and tested.",
+   "fieldname": "use_sandbox",
+   "fieldtype": "Check",
+   "label": "Use Sandbox"
+  },
+  {
+   "fieldname": "sandbox_section",
+   "fieldtype": "Section Break",
+   "label": "Sandbox Credentials"
+  },
+  {
+   "description": "Full PEM block from the staging dashboard (Settings → Integration Information → Generate keys), including the BEGIN/END PUBLIC KEY lines.",
+   "fieldname": "sandbox_public_key",
+   "fieldtype": "Long Text",
+   "label": "Sandbox Public Key"
+  },
+  {
+   "description": "From the staging dashboard: Settings → Integrations. No spaces.",
+   "fieldname": "sandbox_secret_key",
+   "fieldtype": "Password",
+   "label": "Sandbox Secret Key"
+  },
+  {
+   "fieldname": "live_section",
+   "fieldtype": "Section Break",
+   "label": "Live Credentials"
+  },
+  {
+   "description": "Full PEM block from the production dashboard at webxpay.com.",
+   "fieldname": "live_public_key",
+   "fieldtype": "Long Text",
+   "label": "Live Public Key"
+  },
+  {
+   "description": "From the production dashboard at webxpay.com. No spaces.",
+   "fieldname": "live_secret_key",
+   "fieldtype": "Password",
+   "label": "Live Secret Key"
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-08-16 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "SL Payment Gateways",
+ "name": "WebXPay Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "quick_entry": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

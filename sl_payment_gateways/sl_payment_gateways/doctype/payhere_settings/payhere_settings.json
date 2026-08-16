@@ -1,0 +1,83 @@
+{
+ "actions": [],
+ "creation": "2026-08-16 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "use_sandbox",
+  "sandbox_section",
+  "sandbox_merchant_id",
+  "sandbox_merchant_secret",
+  "live_section",
+  "live_merchant_id",
+  "live_merchant_secret"
+ ],
+ "fields": [
+  {
+   "default": "1",
+   "description": "Ticked = checkout goes through sandbox.payhere.lk. Untick only once the Live section below is fully configured and tested. Sandbox and Live are separate PayHere accounts - a sandbox account cannot be converted to live.",
+   "fieldname": "use_sandbox",
+   "fieldtype": "Check",
+   "label": "Use Sandbox"
+  },
+  {
+   "fieldname": "sandbox_section",
+   "fieldtype": "Section Break",
+   "label": "Sandbox Credentials"
+  },
+  {
+   "description": "From sandbox.payhere.lk merchant dashboard.",
+   "fieldname": "sandbox_merchant_id",
+   "fieldtype": "Data",
+   "label": "Sandbox Merchant ID"
+  },
+  {
+   "description": "From sandbox.payhere.lk merchant dashboard.",
+   "fieldname": "sandbox_merchant_secret",
+   "fieldtype": "Password",
+   "label": "Sandbox Merchant Secret"
+  },
+  {
+   "fieldname": "live_section",
+   "fieldtype": "Section Break",
+   "label": "Live Credentials"
+  },
+  {
+   "description": "From payhere.lk merchant dashboard.",
+   "fieldname": "live_merchant_id",
+   "fieldtype": "Data",
+   "label": "Live Merchant ID"
+  },
+  {
+   "description": "From payhere.lk merchant dashboard.",
+   "fieldname": "live_merchant_secret",
+   "fieldtype": "Password",
+   "label": "Live Merchant Secret"
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-08-16 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "SL Payment Gateways",
+ "name": "PayHere Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "quick_entry": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

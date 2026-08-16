@@ -51,11 +51,11 @@ In PayHere's own words, sandbox *"is a completely separate deployment, so you ca
 
 ---
 
-## 1. Create the Settings DocType
+## 1. Find the Settings DocType
 
-This app ships no DocTypes, so you create one once: **Setup → DocType → New**, name it exactly `PayHere Settings`, tick **Is Single**, and set **Module** to any module on your site.
+The app ships its own **PayHere Settings** Single DocType (`sl_payment_gateways/sl_payment_gateways/doctype/payhere_settings/`) — installing or updating the app creates it automatically, nothing to build by hand. It's already restricted to **System Manager** only, since it holds live payment credentials.
 
-Add these fields:
+To open it: type `PayHere Settings` into the Desk awesome-bar (top search) and select it, the same way you'd reach **System Settings**. Fields:
 
 | Label | Fieldname | Type | Notes |
 |---|---|---|---|
@@ -65,11 +65,7 @@ Add these fields:
 | Live Merchant ID | `live_merchant_id` | Data | From `payhere.lk` |
 | Live Merchant Secret | `live_merchant_secret` | Password | From `payhere.lk` |
 
-> **Fieldnames matter, labels don't.** Frappe derives the fieldname from the label, so confirm each one in the field's Fieldname box before saving.
-
-Then **restrict the DocType to System Manager only** (Role Permissions Manager → remove every other role). It holds live payment credentials.
-
-> **Upgrading from an earlier version of this app?** Existing plain `merchant_id` / `merchant_secret` fields still work — the app falls back to them when the mode-specific field is empty. The fallback never reaches across modes: an empty `live_merchant_secret` fails with an error rather than quietly using the sandbox one.
+> **Upgrading from an earlier version of this app that had no DocType?** If you previously created `PayHere Settings` by hand via Setup → DocType → New, `bench migrate` reconciles it with the app-owned definition above by fieldname — your existing `sandbox_merchant_id` / `live_merchant_secret` etc. values are preserved. If you were on an even older setup with plain `merchant_id` / `merchant_secret` fields only, those still work as a fallback when the mode-specific field is empty; it never reaches across modes, so an empty `live_merchant_secret` still fails with an error rather than quietly using the sandbox one.
 
 ---
 
@@ -191,7 +187,7 @@ Anything unrecognised maps to `Failed` — never to `Paid`.
 
 | Message | Cause | Fix |
 |---|---|---|
-| `PayHere Settings doctype does not exist` | Step 1 not done | Create the Single DocType |
+| `PayHere Settings doctype does not exist` | App installed but `bench migrate` never ran (rare — install-app runs it for you) | `bench --site <your-site> migrate` |
 | `PayHere Settings is not configured for Live mode: set live_merchant_id` | Field empty for the active mode | Fill that exact field |
 | `notify_url is required` | Caller didn't pass it | Pass your own handler's URL — see step 2e |
 | `Invalid notify_url: must point at this site` | Off-site or protocol-relative URL | Use a path like `/api/method/...` or a full URL on your own host |

@@ -45,11 +45,11 @@ Two environments, two entirely separate merchant accounts:
 
 ---
 
-## 1. Create the Settings DocType
+## 1. Find the Settings DocType
 
-This app ships no DocTypes, so you create one once: **Setup → DocType → New**, name it exactly `WebXPay Settings`, tick **Is Single**, and set **Module** to any module on your site.
+The app ships its own **WebXPay Settings** Single DocType (`sl_payment_gateways/sl_payment_gateways/doctype/webxpay_settings/`) — installing or updating the app creates it automatically, nothing to build by hand. It's already restricted to **System Manager** only, since it holds live payment credentials.
 
-Add these fields:
+To open it: type `WebXPay Settings` into the Desk awesome-bar (top search) and select it, the same way you'd reach **System Settings**. Fields:
 
 | Label | Fieldname | Type | Notes |
 |---|---|---|---|
@@ -59,11 +59,7 @@ Add these fields:
 | Live Public Key | `live_public_key` | Long Text | PEM from the production portal |
 | Live Secret Key | `live_secret_key` | Password | From the production portal |
 
-> **Fieldnames matter, labels don't.** Frappe derives the fieldname from the label, so confirm each one in the field's Fieldname box before saving.
-
-Then **restrict the DocType to System Manager only** (Role Permissions Manager → remove every other role). It holds live payment credentials.
-
-> **Upgrading from an earlier version of this app?** If you already have plain `public_key` / `secret_key` fields, they still work — the app falls back to them when the mode-specific field is empty. Add the four new fields when you're ready to keep both environments configured at once. The fallback never reaches across modes: an empty `live_public_key` fails with an error, it does not quietly use the sandbox key.
+> **Upgrading from an earlier version of this app that had no DocType?** If you previously created `WebXPay Settings` by hand via Setup → DocType → New, `bench migrate` reconciles it with the app-owned definition above by fieldname — your existing `sandbox_public_key` / `live_secret_key` etc. values are preserved. If you were on an even older setup with plain `public_key` / `secret_key` fields only, those still work as a fallback when the mode-specific field is empty; it never reaches across modes, so an empty `live_public_key` still fails with an error rather than quietly using the sandbox key.
 
 ---
 
@@ -168,7 +164,7 @@ Errors raised by this app, and what each one means:
 
 | Message | Cause | Fix |
 |---|---|---|
-| `WebXPay Settings doctype does not exist` | Step 1 not done | Create the Single DocType |
+| `WebXPay Settings doctype does not exist` | App installed but `bench migrate` never ran (rare — install-app runs it for you) | `bench --site <your-site> migrate` |
 | `WebXPay Settings is not configured for Sandbox mode: set sandbox_public_key` | Field empty for the active mode | Fill that exact field. The message always names the mode and the field |
 | `WebXPay Settings holds an unreadable RSA public key for Live mode` | Key isn't valid PEM | Re-copy the whole block including `-----BEGIN/END PUBLIC KEY-----` |
 | `Invalid order_id` | Order name has a space, pipe, `#`, or other unsafe character | Order names must be `[A-Za-z0-9._-/]`, max 100 chars |

@@ -6,7 +6,7 @@ Pluggable Sri Lankan payment gateway integrations for **ERPNext / Frappe**. Curr
 
 Frappe's built-in `payments` app covers PayPal, Stripe, Razorpay, and similar international gateways — but nothing for Sri Lankan payment gateways. Each of those requires real cryptography (RSA signing for WebXPay, MD5 hashing for PayHere) to build and verify a checkout, which **cannot run inside a Frappe Server Script** — the Server Script sandbox has no `import` capability at all (no `hashlib`, no `Crypto`, nothing beyond a small fixed set of builtins).
 
-This app is the small piece of real, installable code that has to exist outside the sandbox to do that cryptography. It ships no DocTypes and no UI of its own — it's a thin API layer your own Server Scripts (or a custom app) call into.
+This app is the small piece of real, installable code that has to exist outside the sandbox to do that cryptography. Beyond the two Settings DocTypes it ships for entering credentials (`WebXPay Settings`, `PayHere Settings` — see below), it has no UI of its own — it's a thin API layer your own Server Scripts (or a custom app) call into.
 
 ## Architecture
 
@@ -86,7 +86,7 @@ bench --site <your-site> console -c "import sl_payment_gateways, Crypto; print('
 No module named 'sl_payment_gateways.sl_payment_gateways'
 ```
 
-It stays empty because this app ships no DocTypes — Frappe walks it for `doctype/`, `page/` and `report/` subfolders, finds none, and moves on. Don't delete it for looking unused.
+Under it sits `doctype/`, holding this app's two Single DocTypes — `webxpay_settings/` and `payhere_settings/` — which is what Frappe walks this folder to find (along with `page/` and `report/` subfolders, of which this app has none). Don't delete this folder for looking unused: `git status` will show it's not empty.
 
 ## Setup (per gateway)
 
@@ -238,7 +238,7 @@ bench restart
 bench --site <your-site> uninstall-app sl_payment_gateways
 ```
 
-You'll be prompted to confirm since this is destructive to that site's use of the app. Because this app ships no DocTypes of its own, there's no data loss risk from the app's own schema — but note this does **not** touch the `WebXPay Settings` / `PayHere Settings` DocTypes you created manually via Desk (see below).
+You'll be prompted to confirm since this is destructive to that site's use of the app. This **does** remove the `WebXPay Settings` / `PayHere Settings` DocTypes and the credentials stored in them — back up that data first (`bench --site <your-site> backup`) if you might reinstall later, since uninstalling and reinstalling gives you a blank Settings doctype, not your old values.
 
 **2. Remove the app from the bench entirely** (after it's uninstalled from every site that had it):
 
@@ -250,9 +250,11 @@ This deletes `apps/sl_payment_gateways` and removes it from `sites/apps.txt`. Ad
 
 **3. Clean up what the app doesn't own itself:**
 
-Since `WebXPay Settings` and `PayHere Settings` are DocTypes *you* created via Desk (not shipped by this app), uninstalling the app leaves them behind. If you want a full clean removal:
-- Delete those DocType records via **Setup → DocType**, or leave them — an orphaned Single DocType with no app behind it is harmless, just unused.
-- Delete any Server Scripts / Client Scripts you pasted into Desk that called into this app's whitelisted methods (`sl_payment_gateways.api.*`) — they'll start throwing "module not found" errors once the app is removed, so remove or disable them first if you're decommissioning the integration rather than just this specific app version.
+`WebXPay Settings` / `PayHere Settings` and their stored credentials go with the app (see step 1). What's *not* app-owned, and so isn't touched by uninstall, is anything you pasted into Desk yourself: delete or disable any Server Scripts / Client Scripts that called this app's whitelisted methods (`sl_payment_gateways.api.*`) before removing the app — they'll start throwing "module not found" errors otherwise, if you're decommissioning the integration rather than just this specific app version.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

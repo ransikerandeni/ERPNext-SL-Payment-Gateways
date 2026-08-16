@@ -9,6 +9,11 @@ app_description = "Pluggable Sri Lankan payment gateway integrations for ERPNext
 app_email = "ransikerandeni@gmail.com"
 app_license = "MIT"
 
-# This app is pure Python utility code (RSA/hash signing for gateway
-# checkouts) exposed as whitelisted methods - no DocTypes, no fixtures,
-# no doc_events, no scheduled jobs. Nothing else needed here.
+# This app is mostly pure Python utility code (RSA/hash signing for
+# gateway checkouts) exposed as whitelisted methods - no fixtures, no
+# doc_events, no scheduled jobs. It does ship two Single DocTypes
+# ("WebXPay Settings", "PayHere Settings" - see
+# sl_payment_gateways/doctype/) that Frappe creates automatically on
+# `bench install-app` / `bench migrate`, so credentials can be entered
+# from Desk instead of a site_config.json edit. Nothing else needed
+# here.
