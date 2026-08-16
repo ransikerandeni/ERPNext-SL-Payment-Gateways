@@ -71,6 +71,23 @@ bench restart
 
 That's it for the app itself — `pycryptodome` (needed for WebXPay's RSA) installs automatically as a declared dependency.
 
+Confirm it landed:
+
+```bash
+bench --site <your-site> list-apps | grep sl_payment_gateways
+bench --site <your-site> console -c "import sl_payment_gateways, Crypto; print('app + pycryptodome OK')"
+```
+
+### A note on the app layout
+
+`sl_payment_gateways/sl_payment_gateways/` is a real, required directory, not a stray copy. On install, Frappe reads `modules.txt`, scrubs each entry (`"SL Payment Gateways"` → `sl_payment_gateways`) and imports `<app>.<module>` as a package. Without that folder, `bench install-app` fails with:
+
+```
+No module named 'sl_payment_gateways.sl_payment_gateways'
+```
+
+It stays empty because this app ships no DocTypes — Frappe walks it for `doctype/`, `page/` and `report/` subfolders, finds none, and moves on. Don't delete it for looking unused.
+
 ## Setup (per gateway)
 
 **Full step-by-step guides, covering sandbox and live for each gateway:**
