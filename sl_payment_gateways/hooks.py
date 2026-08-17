@@ -8,6 +8,7 @@ app_publisher = "Ransike Randeni"
 app_description = "Pluggable Sri Lankan payment gateway integrations for ERPNext (WebXPay, PayHere, and more)"
 app_email = "ransikerandeni@gmail.com"
 app_license = "MIT"
+app_logo_url = "/assets/sl_payment_gateways/images/app-logo.png"
 
 # This app is mostly pure Python utility code (RSA/hash signing for
 # gateway checkouts) exposed as whitelisted methods - no fixtures, no

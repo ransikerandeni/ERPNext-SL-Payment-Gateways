@@ -1,0 +1,26 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3ba2f2"/>
+      <stop offset="1" stop-color="#1877d1"/>
+    </linearGradient>
+  </defs>
+
+  <!-- background -->
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- card body -->
+  <rect x="97.3" y="154.8" width="317.4" height="216.2" rx="29.9" fill="#ffffff"/>
+
+  <!-- card stripe -->
+  <rect x="97.3" y="198.5" width="317.4" height="46" fill="#1877d1"/>
+
+  <!-- card number dots -->
+  <rect x="129.5" y="297.4" width="39.1" height="16.1" rx="8.05" fill="#bfe0ff"/>
+  <rect x="182.4" y="297.4" width="39.1" height="16.1" rx="8.05" fill="#bfe0ff"/>
+
+  <!-- check badge -->
+  <circle cx="375.6" cy="341.1" r="62.1" fill="#2fb457"/>
+  <circle cx="375.6" cy="341.1" r="62.1" fill="none" stroke="#ffffff" stroke-width="9.2"/>
+  <path d="M345.7 341.1 L366.4 361.8 L410.1 313.5" fill="none" stroke="#ffffff" stroke-width="16.1" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
