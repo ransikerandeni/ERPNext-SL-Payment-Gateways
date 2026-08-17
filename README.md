@@ -229,12 +229,12 @@ cd ~/frappe-bench/apps/sl_payment_gateways
 git pull
 cd ~/frappe-bench
 bench --site <your-site> migrate
-bench build
+bench build --app sl_payment_gateways
 bench restart
 ```
 
 - `bench migrate` is the step that matters most: it's what applies any new/changed DocTypes (e.g. `WebXPay Settings`, `PayHere Settings`) to your site's database. Skipping it leaves the site running old schema even though the code updated.
-- `bench build` regenerates static assets (`bench build --app sl_payment_gateways` scopes it to just this app, faster than a full rebuild; add `--force` to ignore the build cache). This app has no JS/CSS of its own, so there's nothing new to bundle — running it is harmless and matches the standard update sequence, but for this app specifically `bench migrate` is the step that actually does something.
+- `bench build --app sl_payment_gateways` regenerates static assets, scoped to just this app rather than a full-bench rebuild (add `--force` to ignore the build cache). This app has no JS/CSS of its own, so there's nothing new to bundle — running it is harmless and matches the standard update sequence, but for this app specifically `bench migrate` is the step that actually does something.
 - `bench restart` reloads the Python workers so the new code actually gets served. Only needed under supervisor/production setups — `bench start` (dev mode) picks up changes automatically.
 
 **If you edit this repo somewhere other than the bench server** (e.g. a laptop, with the server pulling from GitHub): push your changes to the remote first (`git push origin main`), then run the `git pull` above on the server. If the server has no direct GitHub access, pull locally and `rsync`/`scp` the app directory across instead.
