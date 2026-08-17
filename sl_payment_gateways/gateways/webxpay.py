@@ -80,6 +80,17 @@ LIVE_CHECKOUT_URL = "https://webxpay.com/index.php?route=checkout/billing"
 # structure the sender chose.
 MIN_PADDING_LEN = 8
 
+# Every request in WebXPay's own published samples (php-request.txt et
+# al, developers.webxpay.com/Guides/Redirect-Integration) posts this
+# exact literal value in a field labelled "Mechanism" - undocumented in
+# the guide's own parameter table, but present on every sample form
+# right next to secret_key and payment. It looks like a fixed protocol
+# constant rather than a per-merchant secret (unlike secret_key, which
+# their sample also hardcodes but obviously as a fake placeholder), so
+# it's used as the default here. Overridable via *_enc_method in
+# WebXPay Settings in case a given account turns out to need its own.
+DEFAULT_ENC_METHOD = "JCs3J+6oSz4V0LgE0zi/Bg=="
+
 
 def _settings():
 	try:
@@ -107,6 +118,17 @@ def _public_key(settings):
 			"WebXPay Settings holds an unreadable RSA public key for %s mode."
 			% ("Sandbox" if is_sandbox(settings) else "Live",)
 		)
+
+
+def _enc_method(settings):
+	"""The `enc_method` ("Mechanism") field - see DEFAULT_ENC_METHOD.
+	Unlike public_key/secret_key this isn't a credential that must be
+	filled in, so it never throws: empty settings just get the sample's
+	default rather than an error naming a field most accounts won't need
+	to touch."""
+	prefix = "sandbox_" if is_sandbox(settings) else "live_"
+	value = settings.get(prefix + "enc_method") or settings.get("enc_method")
+	return value.strip() if value else DEFAULT_ENC_METHOD
 
 
 def _i2osp(n, length):
@@ -203,6 +225,10 @@ def build_checkout(order_id, amount, currency, customer):
 			# public endpoint (see api.py).
 			"secret_key": secret_key,
 			"payment": payment_field,
+			# See DEFAULT_ENC_METHOD - every WebXPay sample request posts
+			# this field; without it, their server has failed to decrypt
+			# `payment` correctly ("Invalid encryption") in practice.
+			"enc_method": _enc_method(settings),
 			"cms": "ERPNext",
 			"process_currency": currency,
 		},

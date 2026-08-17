@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.3.0 — 2026-08-17
+
+### Fixed
+
+- `mode_value()` / `mode_password()` in [utils.py](sl_payment_gateways/utils.py)
+  now strip outer whitespace from credential/key fields before use. A
+  stray leading/trailing space or newline from copy-paste (browser,
+  clipboard manager, source page) previously produced an opaque
+  "unreadable RSA public key" or a gateway-side rejection with no useful
+  diagnostic. Internal PEM line breaks are untouched.
+
+### Added
+
+- WebXPay checkout now sends an `enc_method` field ("Mechanism"),
+  matching every request in WebXPay's own published sample code — this
+  field is undocumented in their integration guide's own parameter
+  table but present on every sample form, and its absence is a
+  plausible cause of `error=442&message=Invalid encryption` from
+  WebXPay's server. New optional `sandbox_enc_method` / `live_enc_method`
+  fields on `WebXPay Settings` let you override it per mode; left blank,
+  the app sends WebXPay's own published sample value as a default. See
+  [docs/webxpay.md](docs/webxpay.md).
+
 ## 0.2.0 — 2026-08-16
 
 ### Added

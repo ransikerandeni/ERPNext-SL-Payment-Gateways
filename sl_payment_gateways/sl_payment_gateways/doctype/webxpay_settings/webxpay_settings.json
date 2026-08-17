@@ -9,9 +9,11 @@
   "sandbox_section",
   "sandbox_public_key",
   "sandbox_secret_key",
+  "sandbox_enc_method",
   "live_section",
   "live_public_key",
-  "live_secret_key"
+  "live_secret_key",
+  "live_enc_method"
  ],
  "fields": [
   {
@@ -39,6 +41,12 @@
    "label": "Sandbox Secret Key"
   },
   {
+   "description": "Optional. WebXPay's \"Mechanism\" field - check the staging dashboard's Settings → Integrations page for a value under that name. Leave blank to use the default from WebXPay's own published sample request, which works for most accounts.",
+   "fieldname": "sandbox_enc_method",
+   "fieldtype": "Data",
+   "label": "Sandbox Encryption Method"
+  },
+  {
    "fieldname": "live_section",
    "fieldtype": "Section Break",
    "label": "Live Credentials"
@@ -54,6 +62,12 @@
    "fieldname": "live_secret_key",
    "fieldtype": "Password",
    "label": "Live Secret Key"
+  },
+  {
+   "description": "Optional. WebXPay's \"Mechanism\" field - check the production dashboard's Settings → Integrations page for a value under that name. Leave blank to use the default from WebXPay's own published sample request, which works for most accounts.",
+   "fieldname": "live_enc_method",
+   "fieldtype": "Data",
+   "label": "Live Encryption Method"
   }
  ],
  "issingle": 1,

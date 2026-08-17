@@ -56,8 +56,12 @@ To open it: type `WebXPay Settings` into the Desk awesome-bar (top search) and s
 | Use Sandbox | `use_sandbox` | Check | Default `1`. Ticked = staging, unticked = live |
 | Sandbox Public Key | `sandbox_public_key` | Long Text | PEM from the staging portal |
 | Sandbox Secret Key | `sandbox_secret_key` | Password | From the staging portal |
+| Sandbox Encryption Method | `sandbox_enc_method` | Data | Optional — see below |
 | Live Public Key | `live_public_key` | Long Text | PEM from the production portal |
 | Live Secret Key | `live_secret_key` | Password | From the production portal |
+| Live Encryption Method | `live_enc_method` | Data | Optional — see below |
+
+**About Encryption Method / `enc_method`:** every request in WebXPay's own published sample code (`php-request.txt`, linked from [their Redirect Integration guide](https://developers.webxpay.com/Guides/Redirect-Integration/redirect.html)) posts a field named `enc_method`, labelled "Mechanism" on the sample form — but it's absent from the guide's own required/optional field table, and nothing on the page explains what it controls. Leaving it out entirely is a plausible cause of WebXPay's server failing to decrypt `payment` (`error=442&message=Invalid encryption`). Leave both `*_enc_method` fields blank and the app sends WebXPay's own published sample value by default — check your dashboard's Settings → Integrations page for anything called "Encryption Method" or "Mechanism" first, and fill in the mode-specific field here only if you find an account-specific value there.
 
 > **Upgrading from an earlier version of this app that had no DocType?** If you previously created `WebXPay Settings` by hand via Setup → DocType → New, `bench migrate` reconciles it with the app-owned definition above by fieldname — your existing `sandbox_public_key` / `live_secret_key` etc. values are preserved. If you were on an even older setup with plain `public_key` / `secret_key` fields only, those still work as a fallback when the mode-specific field is empty; it never reaches across modes, so an empty `live_public_key` still fails with an error rather than quietly using the sandbox key.
 
@@ -175,6 +179,15 @@ Errors raised by this app, and what each one means:
 | `Invalid PKCS#1 signature padding` | Response is not a WebXPay signature at all | Someone probing the endpoint |
 | `Unexpected WebXPay response format: expected 6 fields, got N` | WebXPay changed their response layout | Compare against your downloaded `php-response.txt` and open an issue |
 | `cannot be called directly over HTTP` | Something called `create_payment` as a public endpoint | Correct — route it through your own whitelisted method instead |
+
+**Errors WebXPay's own checkout page shows you** (not raised by this app — you've reached `stagingxpay.info`/`webxpay.com` and their server is rejecting the request):
+
+| WebXPay page shows | Likely cause |
+|---|---|
+| `error=401&message=Invalid Access` | Wrong `secret_key` for the account the public key came from, or a stray space/newline in it (`repr()` it via `bench console` to check) |
+| `error=442&message=Invalid encryption` | WebXPay's server couldn't decrypt `payment` with the key pair it holds. Check: public/secret key are a matching, current pair (not stale from an earlier "Generate keys" click); and that `enc_method` is being sent — see the Encryption Method note in step 1 above, since this field is undocumented but present in WebXPay's own sample requests and its absence is a known trigger for this exact error |
+
+If neither explains it, the credentials and encryption are structurally fine from this app's side, and it's worth contacting WebXPay's support directly with the exact `error=` code — they can check server-side why decryption or access failed for your account.
 
 **Payment succeeded at WebXPay but the order is still Pending.** The return URL in the dashboard is wrong, or points at the wrong environment. Check `Error Log` for `Gateway payment verification failed`.
 

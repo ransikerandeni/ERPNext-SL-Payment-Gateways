@@ -72,6 +72,26 @@ class TestBuildCheckout:
 		# Guarded by create_payment() not being a public endpoint.
 		assert webxpay.build_checkout("SO-1", "1.00", "LKR", {})["fields"]["secret_key"] == WEBXPAY_SANDBOX_SECRET
 
+	def test_enc_method_defaults_to_webxpays_sample_value(self, webxpay_settings):
+		# Every request in WebXPay's own published samples carries this
+		# field; omitting it is a plausible cause of their server failing
+		# to decrypt `payment` ("Invalid encryption").
+		assert webxpay.build_checkout("SO-1", "1.00", "LKR", {})["fields"]["enc_method"] == webxpay.DEFAULT_ENC_METHOD
+
+	def test_enc_method_uses_mode_specific_override_when_set(self, webxpay_settings):
+		webxpay_settings["sandbox_enc_method"] = "custom-sandbox-mechanism"
+		webxpay_settings["live_enc_method"] = "custom-live-mechanism"
+
+		assert webxpay.build_checkout("SO-1", "1.00", "LKR", {})["fields"]["enc_method"] == "custom-sandbox-mechanism"
+
+		webxpay_settings["use_sandbox"] = 0
+		assert webxpay.build_checkout("SO-1", "1.00", "LKR", {})["fields"]["enc_method"] == "custom-live-mechanism"
+
+	def test_enc_method_override_is_stripped(self, webxpay_settings):
+		webxpay_settings["sandbox_enc_method"] = "  padded-mechanism  "
+
+		assert webxpay.build_checkout("SO-1", "1.00", "LKR", {})["fields"]["enc_method"] == "padded-mechanism"
+
 	def test_unconfigured_settings_throw(self, webxpay_settings):
 		webxpay_settings["sandbox_public_key"] = None
 		with pytest.raises(frappe.ValidationError):
