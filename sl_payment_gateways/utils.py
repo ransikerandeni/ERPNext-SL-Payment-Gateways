@@ -171,6 +171,13 @@ def mode_value(settings, base, sandbox):
 	prefix = "sandbox_" if sandbox else "live_"
 
 	value = settings.get(prefix + base) or settings.get(base)
+	# Desk fields routinely pick up a stray leading/trailing space or
+	# newline from copy-paste (browser, clipboard manager, whatever the
+	# source page rendered) - strip it rather than let it produce an
+	# "unreadable RSA public key" or a gateway-side "Invalid Access" that
+	# gives the operator nothing to go on. Only the outer whitespace is
+	# stripped; a PEM's internal line breaks are untouched.
+	value = value.strip() if value else value
 
 	if not value:
 		_missing(settings, base, prefix, sandbox)
@@ -185,6 +192,7 @@ def mode_password(settings, base, sandbox):
 	value = settings.get_password(prefix + base, raise_exception=False) or settings.get_password(
 		base, raise_exception=False
 	)
+	value = value.strip() if value else value
 
 	if not value:
 		_missing(settings, base, prefix, sandbox)

@@ -2,6 +2,7 @@ import pytest
 
 import frappe
 from sl_payment_gateways import utils
+from tests.frappe_stub import FakeSettingsDoc
 
 
 class TestOrderId:
@@ -142,3 +143,29 @@ class TestSiteUrl:
 	def test_rejects_off_site_and_malformed(self, value):
 		with pytest.raises(frappe.ValidationError):
 			utils.site_url(value, "notify_url")
+
+
+class TestModeValueWhitespace:
+	# Copy-paste from a WebXPay/PayHere dashboard routinely carries a
+	# stray leading/trailing space or newline into these fields, and it
+	# breaks RSA.import_key() / gateway-side signature checks in ways
+	# that are hard to diagnose from the app's own error messages alone.
+	def test_mode_value_strips_outer_whitespace(self):
+		settings = FakeSettingsDoc({"sandbox_public_key": " -----BEGIN PUBLIC KEY-----\nABC\n-----END PUBLIC KEY-----\n"})
+		assert utils.mode_value(settings, "public_key", sandbox=True) == (
+			"-----BEGIN PUBLIC KEY-----\nABC\n-----END PUBLIC KEY-----"
+		)
+
+	def test_mode_value_does_not_strip_internal_line_breaks(self):
+		pem = "-----BEGIN PUBLIC KEY-----\nLINE1\nLINE2\n-----END PUBLIC KEY-----"
+		settings = FakeSettingsDoc({"sandbox_public_key": pem})
+		assert utils.mode_value(settings, "public_key", sandbox=True) == pem
+
+	def test_mode_value_all_whitespace_is_treated_as_missing(self):
+		settings = FakeSettingsDoc({"sandbox_public_key": "   "})
+		with pytest.raises(frappe.ValidationError):
+			utils.mode_value(settings, "public_key", sandbox=True)
+
+	def test_mode_password_strips_outer_whitespace(self):
+		settings = FakeSettingsDoc({}, passwords={"sandbox_secret_key": " 838a13c1-84ff-4f2b-b375 "})
+		assert utils.mode_password(settings, "secret_key", sandbox=True) == "838a13c1-84ff-4f2b-b375"
