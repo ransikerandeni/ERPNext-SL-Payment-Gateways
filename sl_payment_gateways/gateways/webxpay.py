@@ -12,11 +12,14 @@ OPENSSL_PKCS1_PADDING (PKCS#1 v1.5) - block type 0x02 for encryption,
 block type 0x01 for the signature-style public-decrypt. That's what's
 implemented below.
 
-Response format: confirmed against WebXPay's Redirect Integration guide
-(developers.webxpay.com/Guides/Redirect-Integration), which documents the
+Response format: WebXPay's Redirect Integration guide
+(developers.webxpay.com/Guides/Redirect-Integration) documents the
 decoded payment string as
 order_id|order_reference_number|date_time_transaction|status_code|comment|payment_gateway_used
-and status codes 0/00 = approved, 15 = declined.
+with status codes 0/00 = approved, 15 = declined. A real staging
+transaction sends those six *plus two undocumented trailing amounts*
+(requested, then captured), so both lengths are accepted - see
+RESPONSE_FIELDS below.
 
 Sandbox and live are separate WebXPay portals (stagingxpay.info and
 webxpay.com) with separate merchant accounts and separate key pairs, so
@@ -25,11 +28,14 @@ docs/webxpay.md.
 
 RESIDUAL RISKS you must handle in your own return handler
 ---------------------------------------------------------
-1. The response carries no amount. verify_response() therefore proves
-   only "WebXPay says order X reached status Y" - never "order X was paid
-   the right amount". Re-derive the expected price yourself and treat the
-   gateway's own transaction record/dashboard as the source of truth for
-   the figure.
+1. The amount is undocumented and may be absent. When WebXPay sends the
+   eight-field form, the captured figure is inside the signed blob and is
+   returned as `amount` - compare it against your own expected price. On
+   a six-field response `amount` is None and verify_response() proves only
+   "WebXPay says order X reached status Y". Either way the currency is
+   never sent, and their dashboard remains the source of truth for the
+   figure; a caller must handle `amount is None` rather than assuming the
+   check always runs.
 2. The response carries no merchant identifier, and WebXPay signs with
    its own key, not a per-merchant one. A validly signed response for a
    given order_id is therefore not proof that *your* merchant account was
@@ -41,6 +47,7 @@ RESIDUAL RISKS you must handle in your own return handler
 
 import base64
 import os
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 import frappe
 from Crypto.PublicKey import RSA
@@ -60,6 +67,15 @@ from sl_payment_gateways.utils import (
 
 # order_id | order_reference_number | date_time_transaction | status_code
 # | comment | payment_gateway_used
+#
+# The six fields WebXPay's Redirect Integration guide §2.6 documents, and
+# the six a response is *guaranteed* to open with. Confirmed against a
+# real staging transaction:
+#   SLT-ALCT-08-2026-00003|T109922026I20|2026-08-20 09:16:33|00|
+#   00 - Approved|40|10.00|10.00
+# - which also settles the field-order contradiction between their guide
+# and the code comment in their php-response.txt sample (the guide is
+# right; see README §6h).
 RESPONSE_FIELDS = (
 	"order_id",
 	"order_reference_number",
@@ -67,6 +83,25 @@ RESPONSE_FIELDS = (
 	"status_code",
 	"comment",
 	"payment_gateway_used",
+)
+
+# ...and the two undocumented trailing fields that same live response
+# carried, matching the `requested_amount` / `transaction_amount` form
+# parameters WebXPay posts alongside the blob. Absent from their guide
+# entirely, so they are treated as optional: a response with either the
+# documented six or these eight is accepted, and anything else is still
+# rejected as malformed rather than being zipped into a half-empty dict.
+#
+# Only the copies inside the signed blob are ever read. The identically
+# named POST parameters are unsigned and trivially forgeable.
+OPTIONAL_RESPONSE_FIELDS = (
+	"requested_amount",
+	"transaction_amount",
+)
+
+ACCEPTED_FIELD_COUNTS = (
+	len(RESPONSE_FIELDS),
+	len(RESPONSE_FIELDS) + len(OPTIONAL_RESPONSE_FIELDS),
 )
 
 SUCCESS_STATUS_CODES = ("0", "00")
@@ -235,6 +270,33 @@ def build_checkout(order_id, amount, currency, customer):
 	}
 
 
+def _amount_or_none(value):
+	"""Normalise a trailing amount field to a plain `123.45` string.
+
+	Returns None rather than throwing when the field is absent or
+	unparseable: a caller comparing against its own expected price treats
+	None as "nothing to check here" (and, for WebXPay, falls back to the
+	dashboard), which is the right outcome for an undocumented field that
+	may simply not be there.
+	"""
+	if value is None or str(value).strip() == "":
+		return None
+
+	# Decimal directly rather than utils.format_amount(): that one reports
+	# a bad value with frappe.throw(), which would both abort a response
+	# that is otherwise perfectly valid and push a message into the
+	# response for a field their guide never promised in the first place.
+	try:
+		parsed = Decimal(str(value).strip())
+	except (InvalidOperation, ValueError):
+		return None
+
+	if not parsed.is_finite() or parsed < 0:
+		return None
+
+	return str(parsed.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
 def verify_response(form_dict):
 	payment = form_dict.get("payment")
 	signature = form_dict.get("signature")
@@ -257,27 +319,32 @@ def verify_response(form_dict):
 		frappe.throw("WebXPay response signature does not match payment data.")
 
 	parts = payment_plaintext.split("|")
-	if len(parts) != len(RESPONSE_FIELDS):
+	if len(parts) not in ACCEPTED_FIELD_COUNTS:
 		# Previously a short payload zipped into a dict with missing keys
 		# and fell through to status "Failed" - which reads like a declined
 		# payment rather than the malformed response it actually is.
 		frappe.throw(
-			"Unexpected WebXPay response format: expected %d fields, got %d."
-			% (len(RESPONSE_FIELDS), len(parts))
+			"Unexpected WebXPay response format: expected %s fields, got %d."
+			% (" or ".join(str(n) for n in ACCEPTED_FIELD_COUNTS), len(parts))
 		)
 
-	parsed = dict(zip(RESPONSE_FIELDS, parts, strict=True))
+	parsed = dict(zip(RESPONSE_FIELDS + OPTIONAL_RESPONSE_FIELDS, parts, strict=False))
 
 	status = "Paid" if parsed.get("status_code") in SUCCESS_STATUS_CODES else "Failed"
 
 	return {
 		"order_id": parsed.get("order_id"),
 		"status": status,
-		# WebXPay's response carries neither of these. Reported explicitly
-		# so a caller checking `result["amount"]` sees None and knows it has
-		# to verify the figure itself, instead of finding no key and
-		# assuming there was nothing to check.
-		"amount": None,
+		# The amount actually captured, when WebXPay sends it - it is inside
+		# the signed blob, so it is as trustworthy as the status code next
+		# to it. Still None on a six-field response, so a caller checking
+		# `result["amount"]` sees None and knows it has to verify the figure
+		# itself rather than finding no key and assuming there was nothing
+		# to check. `requested_amount` (what we asked for) is in `raw` for
+		# reconciliation; the captured figure is the one worth comparing.
+		"amount": _amount_or_none(parsed.get("transaction_amount")),
+		# Never sent, in either response length - the currency has to come
+		# from the caller's own record of the order.
 		"currency": None,
 		# False: WebXPay signs with its own key, not a per-merchant one, and
 		# the response carries no merchant id - so a valid signature does not

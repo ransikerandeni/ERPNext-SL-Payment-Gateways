@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.3.1 — 2026-08-20
+
+### Fixed
+
+- **WebXPay responses are accepted again.** Their Redirect Integration
+  guide documents a six-field response; a real staging transaction sends
+  eight — the documented six plus undocumented `requested_amount` and
+  `transaction_amount`. `verify_response()` rejected the real shape with
+  `Unexpected WebXPay response format: expected 6 fields, got 8`, so
+  every genuinely approved payment failed at the return handler and the
+  order stayed unpaid. Both lengths are now accepted; any other count is
+  still rejected as malformed.
+
+### Added
+
+- WebXPay `verify_response()` now returns the captured amount as
+  `amount` when the eight-field response carries it (read from the signed
+  blob, never from the identically named unsigned POST parameters), so
+  callers can price-check a WebXPay payment instead of having to take the
+  status on trust. Still `None` on a six-field response, and the currency
+  is never sent at either length — see [docs/webxpay.md](docs/webxpay.md).
+
+### Confirmed
+
+- The response **field order follows WebXPay's guide**, not the
+  contradictory comment in their `php-response.txt` sample. The live
+  payload `...|00|00 - Approved|40|10.00|10.00` puts `status_code` in
+  position 4 exactly as the guide's own worked example does. This
+  resolves the open item in the project README §6h.
+
 ## 0.3.0 — 2026-08-17
 
 ### Fixed

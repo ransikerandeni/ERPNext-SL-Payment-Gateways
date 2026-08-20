@@ -177,7 +177,7 @@ Errors raised by this app, and what each one means:
 | `Malformed payment: not valid base64` | Truncated or mangled response | Check for a proxy rewriting the POST body |
 | `WebXPay response signature does not match payment data` | Signature is not from the key configured for the active mode | Almost always a mode mismatch — staging response arriving while Live is selected, or vice versa |
 | `Invalid PKCS#1 signature padding` | Response is not a WebXPay signature at all | Someone probing the endpoint |
-| `Unexpected WebXPay response format: expected 6 fields, got N` | WebXPay changed their response layout | Compare against your downloaded `php-response.txt` and open an issue |
+| `Unexpected WebXPay response format: expected 6 or 8 fields, got N` | WebXPay changed their response layout again | Six is what their guide documents; eight is what staging actually sends (the six plus `requested_amount` and `transaction_amount`). Any other count is unrecognised — decode the `payment` value from the Error Log payload with `base64 -d` to see the real shape, then open an issue |
 | `cannot be called directly over HTTP` | Something called `create_payment` as a public endpoint | Correct — route it through your own whitelisted method instead |
 
 **Errors WebXPay's own checkout page shows you** (not raised by this app — you've reached `stagingxpay.info`/`webxpay.com` and their server is rejecting the request):
@@ -197,7 +197,7 @@ If neither explains it, the credentials and encryption are structurally fine fro
 
 ## Security notes specific to WebXPay
 
-**The response carries no amount.** `verify_response()` returns `amount: None` for WebXPay. There is nothing in the payload to check the price against, so a WebXPay "Paid" proves only that WebXPay says that order reached that status. Reconcile figures against the WebXPay dashboard; do not treat the callback as evidence of how much was paid.
+**The amount is undocumented and optional.** WebXPay's guide describes a six-field response with no amount in it; their staging portal actually sends eight, the last two being the requested and captured amounts. Where they are sent, they are inside the signed blob and `verify_response()` returns the captured figure as `amount` — worth comparing against your own expected price. Where they are not, `amount` is `None` and a WebXPay "Paid" proves only that WebXPay says that order reached that status. Because the field is undocumented, do not build on it being there: handle `None`, and keep reconciling against the WebXPay dashboard. The currency is never sent at either length.
 
 **The response carries no merchant identifier**, and WebXPay signs with its own key rather than a per-merchant one. Any WebXPay merchant could therefore produce a validly signed success for an arbitrary `order_id` and post it to your return URL. Your handler must only accept a response for an order it actually put into a pending state for WebXPay — which is what `create_gateway_payment` sets up and `gateway_payment_return` checks.
 

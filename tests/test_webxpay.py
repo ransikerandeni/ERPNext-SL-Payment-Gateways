@@ -9,6 +9,11 @@ from .conftest import WEBXPAY_SANDBOX_SECRET
 
 GOOD_RESPONSE = "SO-0001|WX-REF-99|2026-08-14 10:00:00|00|Approved|VISA"
 
+# Verbatim shape of a real WebXPay staging response (order id and
+# reference changed): the six documented fields plus the two
+# undocumented trailing amounts, requested then captured.
+LIVE_SHAPE_RESPONSE = "SO-0001|T109922026I20|2026-08-20 09:16:33|00|00 - Approved|40|10.00|10.00"
+
 
 def decrypt_payment_field(payment_b64, rsa_key):
 	"""Undo what build_checkout() produced, using the private half of the
@@ -213,6 +218,48 @@ class TestVerifyResponse:
 
 		with pytest.raises(frappe.ValidationError, match="Unexpected WebXPay response format"):
 			webxpay.verify_response(frappe._dict(signed))
+
+	def test_accepts_the_eight_field_response_webxpay_actually_sends(
+		self, webxpay_settings, sign_webxpay
+	):
+		# Their guide documents six fields; staging sends eight. Rejecting
+		# the real shape failed every genuinely approved payment.
+		result = webxpay.verify_response(frappe._dict(sign_webxpay(LIVE_SHAPE_RESPONSE)))
+
+		assert result["status"] == "Paid"
+		assert result["order_id"] == "SO-0001"
+		assert result["raw"]["payment_gateway_used"] == "40"
+		assert result["raw"]["requested_amount"] == "10.00"
+		assert result["raw"]["transaction_amount"] == "10.00"
+
+	def test_reports_the_captured_amount_when_present(self, webxpay_settings, sign_webxpay):
+		result = webxpay.verify_response(frappe._dict(sign_webxpay(LIVE_SHAPE_RESPONSE)))
+
+		assert result["amount"] == "10.00"
+		# Never sent at either length.
+		assert result["currency"] is None
+
+	def test_captured_amount_is_normalised(self, webxpay_settings, sign_webxpay):
+		signed = sign_webxpay("SO-0001|REF|2026-08-20 09:16:33|00|Approved|40|10|9.5")
+
+		assert webxpay.verify_response(frappe._dict(signed))["amount"] == "9.50"
+
+	@pytest.mark.parametrize("trailing", ["", "  ", "not-a-number", "-1.00", "NaN"])
+	def test_unusable_captured_amount_reports_none_rather_than_failing(
+		self, webxpay_settings, sign_webxpay, trailing
+	):
+		# An undocumented field that is missing or junk must not turn an
+		# approved payment into an error - None means "nothing to check".
+		signed = sign_webxpay("SO-0001|REF|2026-08-20 09:16:33|00|Approved|40|10.00|%s" % (trailing,))
+		result = webxpay.verify_response(frappe._dict(signed))
+
+		assert result["status"] == "Paid"
+		assert result["amount"] is None
+
+	@pytest.mark.parametrize("body", ["SO-1|REF", "SO-1|REF|d|00|c|40|10.00", "SO-1|REF|d|00|c|40|1|2|3"])
+	def test_still_rejects_other_field_counts(self, webxpay_settings, sign_webxpay, body):
+		with pytest.raises(frappe.ValidationError, match="Unexpected WebXPay response format"):
+			webxpay.verify_response(frappe._dict(sign_webxpay(body)))
 
 	def test_reports_no_amount_to_check(self, webxpay_settings, sign_webxpay):
 		result = webxpay.verify_response(frappe._dict(sign_webxpay(GOOD_RESPONSE)))
