@@ -114,6 +114,33 @@ def create_payment(gateway, order_id, amount, currency="LKR", **customer):
 	return _get_gateway(gateway).build_checkout(order_id, amount, currency, customer)
 
 
+def _keep_browser_session():
+	"""Stop this request writing `sid=Guest` over the visitor's real session.
+
+	A gateway return is a *cross-site* POST: the browser is handed a form
+	on the gateway's domain and posts it to us, so SameSite=Lax withholds
+	the session cookie and the request authenticates as Guest even when
+	the same browser is signed in to Desk. Frappe then does what it does
+	for any Guest request and sets `sid=Guest` on the way out - which
+	lands in the browser that *is* signed in and silently logs it out.
+	The participant pays, gets bounced to the login screen, and reads that
+	as the payment having failed.
+
+	Dropping the cookie from the outgoing response leaves whatever the
+	browser already holds untouched: a signed-in session stays signed in,
+	and a genuine guest simply doesn't get a new anonymous sid from this
+	one endpoint. Nothing here depends on session state - the payload is
+	verified cryptographically, not by who sent it.
+	"""
+	cookie_manager = getattr(frappe.local, "cookie_manager", None)
+	cookies = getattr(cookie_manager, "cookies", None)
+
+	# Best-effort: an internal detail of frappe.auth, so never let its
+	# absence or a changed shape turn a verified payment into an error.
+	if isinstance(cookies, dict):
+		cookies.pop("sid", None)
+
+
 @frappe.whitelist(allow_guest=True)
 def payment_return(gateway):
 	"""Verify an inbound gateway response. Safe to expose to guests: every
@@ -124,4 +151,8 @@ def payment_return(gateway):
 	that the order exists, is not already paid, was set up for this
 	gateway, and (where the gateway echoes it) was paid the right amount.
 	"""
+	# Before verification, not after: a malformed or forged payload makes
+	# verify_response() throw, and that response carries cookies too.
+	_keep_browser_session()
+
 	return _get_gateway(gateway).verify_response(frappe.form_dict)

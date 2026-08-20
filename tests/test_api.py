@@ -1,3 +1,5 @@
+import types
+
 import pytest
 
 import frappe
@@ -182,6 +184,49 @@ class TestPaymentReturn:
 	def test_unknown_gateway_throws(self):
 		with pytest.raises(frappe.ValidationError, match="Unknown payment gateway"):
 			api.payment_return("Nonexistent Bank")
+
+	def test_does_not_send_a_session_cookie_back(self, payhere_settings, payhere_notification):
+		# A gateway return is a cross-site POST, so it authenticates as
+		# Guest even from a signed-in browser. Letting Frappe set
+		# `sid=Guest` on the response logs that browser out mid-payment.
+		frappe.local.form_dict = payhere_notification()
+		frappe.local.cookie_manager = types.SimpleNamespace(cookies={"sid": "Guest", "country": "LK"})
+
+		api.payment_return("PayHere")
+
+		assert "sid" not in frappe.local.cookie_manager.cookies
+		# Only the session cookie - nothing else on the response is ours
+		# to drop.
+		assert frappe.local.cookie_manager.cookies["country"] == "LK"
+
+	def test_session_cookie_is_dropped_even_when_verification_fails(
+		self, payhere_settings, payhere_notification
+	):
+		# The error response carries cookies too, so a forged or malformed
+		# payload must not be able to log a signed-in browser out either.
+		payload = payhere_notification()
+		payload["md5sig"] = "0" * 32
+		frappe.local.form_dict = payload
+		frappe.local.cookie_manager = types.SimpleNamespace(cookies={"sid": "Guest"})
+
+		with pytest.raises(frappe.ValidationError):
+			api.payment_return("PayHere")
+
+		assert "sid" not in frappe.local.cookie_manager.cookies
+
+	@pytest.mark.parametrize(
+		"cookie_manager",
+		[None, types.SimpleNamespace(), types.SimpleNamespace(cookies=None)],
+	)
+	def test_survives_a_frappe_without_the_cookie_internals(
+		self, payhere_settings, payhere_notification, cookie_manager
+	):
+		# frappe.auth's cookie plumbing is an internal detail: if it moves,
+		# a verified payment must still settle rather than erroring.
+		frappe.local.form_dict = payhere_notification()
+		frappe.local.cookie_manager = cookie_manager
+
+		assert api.payment_return("PayHere")["status"] == "Paid"
 
 	def test_unverifiable_payload_raises_rather_than_returning_a_status(
 		self, payhere_settings, payhere_notification

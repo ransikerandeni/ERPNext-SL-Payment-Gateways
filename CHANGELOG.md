@@ -12,6 +12,15 @@
   every genuinely approved payment failed at the return handler and the
   order stayed unpaid. Both lengths are now accepted; any other count is
   still rejected as malformed.
+- **A gateway return no longer logs the browser out of ERPNext.** The
+  return is a cross-site POST, so SameSite=Lax withholds the session
+  cookie and it authenticates as Guest even from a signed-in browser;
+  Frappe then set `sid=Guest` on the response, landing an anonymous
+  session in the browser that *was* signed in. `payment_return()` now
+  drops the session cookie from its own response (before verification,
+  so error responses are covered too), leaving whatever the browser
+  already holds untouched. Nothing on this endpoint depends on session
+  state — the payload is verified cryptographically, not by who sent it.
 
 ### Added
 

@@ -189,6 +189,8 @@ Errors raised by this app, and what each one means:
 
 If neither explains it, the credentials and encryption are structurally fine from this app's side, and it's worth contacting WebXPay's support directly with the exact `error=` code — they can check server-side why decryption or access failed for your account.
 
+**You get logged out of ERPNext when the return lands.** Fixed in 0.3.1 — the cross-site POST from the gateway authenticated as Guest and Frappe wrote `sid=Guest` over the real session cookie. If you still see it, the app on the site is older than 0.3.1; check with `bench --site <site> console` → `import sl_payment_gateways; print(sl_payment_gateways.__version__)`.
+
 **Payment succeeded at WebXPay but the order is still Pending.** The return URL in the dashboard is wrong, or points at the wrong environment. Check `Error Log` for `Gateway payment verification failed`.
 
 **Everything worked in sandbox and fails live.** Check `use_sandbox` is actually unticked *and* that the production return URL is set in the production dashboard — it is a separate account, so the staging URL you configured does not carry over.

@@ -31,10 +31,12 @@ def clean_frappe():
 	"""Every test starts with an empty form_dict and no configured doctypes."""
 	frappe.local.form_dict = frappe._dict()
 	frappe.local.request = None
+	frappe.local.cookie_manager = None
 	frappe.test_docs.clear()
 	yield
 	frappe.local.form_dict = frappe._dict()
 	frappe.local.request = None
+	frappe.local.cookie_manager = None
 	frappe.test_docs.clear()
 
 
