@@ -129,7 +129,26 @@ def build_module(site_url="https://erp.example.com"):
 	utils.escape_html = escape_html
 	frappe.utils = utils
 
+	# frappe.model.document.Document - just enough for the Settings
+	# doctype controllers to be importable. They are plain classes with
+	# hook methods on them; nothing here needs a real Document.
+	model = types.ModuleType("frappe.model")
+	document = types.ModuleType("frappe.model.document")
+
+	class Document:
+		def __init__(self, **kwargs):
+			self.__dict__.update(kwargs)
+
+		def get_password(self, fieldname, raise_exception=True):
+			return self.__dict__.get(fieldname)
+
+	document.Document = Document
+	model.document = document
+	frappe.model = model
+
 	sys.modules["frappe"] = frappe
 	sys.modules["frappe.utils"] = utils
+	sys.modules["frappe.model"] = model
+	sys.modules["frappe.model.document"] = document
 
 	return frappe

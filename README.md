@@ -190,6 +190,23 @@ The [`payment/gateway/`](../payment/gateway/) scripts in this project are a work
 
 That `my_payment_return` endpoint's URL (with `?gateway=WebXPay` or `?gateway=PayHere` appended) is what goes into WebXPay's dashboard return URL / PayHere's `notify_url` above. If you're doing this as Desk-pasted Server Scripts rather than app code, an API-type Server Script with `Allow Guest` checked works the same way — see this project's worked example (a full ERPNext Slot Allocation payment flow built on this app) for a concrete pattern to copy.
 
+### Linking an ERPNext Payment Gateway Account
+
+Optional, and only relevant if your caller creates **Payment Requests**. Attaching a Payment Gateway Account makes a WebXPay/PayHere payment name its gateway on the accounting record the way an ERPNext-native gateway does.
+
+It needs care, because that link switches on core's own checkout flow: `Payment Request.on_submit()` calls `payment_gateway_validation()` and then asks the gateway's controller for a payment URL to email. That assumes a GET-redirect gateway. These are signed POST forms — there is no URL to hand over.
+
+Both Settings doctypes therefore implement ERPNext's opt-out hook:
+
+```python
+def on_payment_request_submission(self, payment_request):
+    return False        # this return value is core's `send_mail` flag
+```
+
+With it, the request submits, keeps its gateway account, and stays at `Requested` for your return handler to settle — the checkout stays entirely in your own code. Create the `Payment Gateway` record with **Gateway Settings** set to `WebXPay Settings` / `PayHere Settings` and **Gateway Controller left blank** (they're Single DocTypes), then a `Payment Gateway Account` in the currency you charge.
+
+If you implement a new gateway module, give its Settings doctype the same hook unless you genuinely intend core to drive the checkout.
+
 ## Tests
 
 The suite stubs Frappe ([`tests/frappe_stub.py`](tests/frappe_stub.py)), so it runs with plain `pytest` — no bench, site or database:

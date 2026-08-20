@@ -31,6 +31,19 @@
   status on trust. Still `None` on a six-field response, and the currency
   is never sent at either length — see [docs/webxpay.md](docs/webxpay.md).
 
+### Added
+
+- Both Settings doctypes now implement ERPNext's
+  `on_payment_request_submission()` hook, returning `False`. This lets a
+  caller link a **Payment Gateway Account** to its Payment Request — so
+  a WebXPay/PayHere payment names its gateway on the accounting record
+  the way a PayPal one does — without core reacting to that link by
+  trying to build and email a payment URL through a controller that has
+  no `get_payment_url()`. These gateways are signed POST forms, not GET
+  redirects; the checkout stays where it is, in the caller's own code.
+  Optional on both sides: nothing here requires a gateway account to
+  exist.
+
 ### Confirmed
 
 - The response **field order follows WebXPay's guide**, not the
