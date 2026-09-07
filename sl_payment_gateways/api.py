@@ -38,7 +38,7 @@ GATEWAYS = {
 
 # Gateways with a real, working implementation - used by list_gateways()
 # so the client script only offers ones that actually work.
-IMPLEMENTED = ("WebXPay", "PayHere")
+IMPLEMENTED = ("WebXPay", "PayHere", "Peoples Bank")
 
 # Keys Frappe's own transport puts in form_dict. create_payment takes
 # **customer, so without this they'd be forwarded to gateway modules as

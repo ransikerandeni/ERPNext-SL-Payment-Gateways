@@ -12,7 +12,7 @@ frappe_stub.build_module()
 
 import frappe  # noqa: E402
 
-from sl_payment_gateways.gateways import payhere, webxpay  # noqa: E402
+from sl_payment_gateways.gateways import payhere, peoples_bank, webxpay  # noqa: E402
 
 # Sandbox and live are different accounts at both gateways, so the
 # fixtures use different values for each - a test that passes with the
@@ -24,6 +24,19 @@ PAYHERE_SANDBOX_MERCHANT_ID = "1211149"
 PAYHERE_SANDBOX_SECRET = "MzI0MTU5NDk4NzE5ODc2NTQzMjE"
 PAYHERE_LIVE_MERCHANT_ID = "4001337"
 PAYHERE_LIVE_SECRET = "OTg3NjU0MzIxMDEyMzQ1Njc4OQ"
+
+# People's Bank issues a CyberSource test profile and a separate live one.
+# Invented values, shaped like the real thing (profile id a UUID, access
+# key 32 hex, secret key a long hex string) so the tests exercise
+# realistic lengths and character sets without carrying any part of a
+# credential from the bank's integration pack into the repository.
+PEOPLES_SANDBOX_PROFILE_ID = "1A2B3C4D-0000-4AAA-8BBB-0123456789AB"
+PEOPLES_SANDBOX_ACCESS_KEY = "aaaaaaaa1111bbbbbbbb2222cccccccc"
+PEOPLES_SANDBOX_SECRET = "0" * 40 + "sandbox" + "f" * 17
+
+PEOPLES_LIVE_PROFILE_ID = "9F8E7D6C-0000-4CCC-8DDD-BA9876543210"
+PEOPLES_LIVE_ACCESS_KEY = "dddddddd3333eeeeeeee4444ffffffff"
+PEOPLES_LIVE_SECRET = "1" * 40 + "live" + "e" * 20
 
 
 @pytest.fixture(autouse=True)
@@ -169,4 +182,92 @@ def payhere_notification():
 	return _build
 
 
-__all__ = ["webxpay", "payhere"]
+@pytest.fixture
+def peoples_bank_settings():
+	"""Both credential sets present, sandbox active."""
+	frappe.test_docs["Peoples Bank Settings"] = frappe_stub.FakeSettingsDoc(
+		{
+			"use_sandbox": 1,
+			"sandbox_profile_id": PEOPLES_SANDBOX_PROFILE_ID,
+			"sandbox_access_key": PEOPLES_SANDBOX_ACCESS_KEY,
+			"live_profile_id": PEOPLES_LIVE_PROFILE_ID,
+			"live_access_key": PEOPLES_LIVE_ACCESS_KEY,
+		},
+		passwords={
+			"sandbox_secret_key": PEOPLES_SANDBOX_SECRET,
+			"live_secret_key": PEOPLES_LIVE_SECRET,
+		},
+	)
+	return frappe.test_docs["Peoples Bank Settings"]
+
+
+@pytest.fixture
+def peoples_bank_legacy_settings():
+	"""The pre-split shape: one unprefixed credential set."""
+	frappe.test_docs["Peoples Bank Settings"] = frappe_stub.FakeSettingsDoc(
+		{
+			"use_sandbox": 1,
+			"profile_id": PEOPLES_SANDBOX_PROFILE_ID,
+			"access_key": PEOPLES_SANDBOX_ACCESS_KEY,
+		},
+		passwords={"secret_key": PEOPLES_SANDBOX_SECRET},
+	)
+	return frappe.test_docs["Peoples Bank Settings"]
+
+
+@pytest.fixture
+def peoples_bank_response():
+	"""Build a genuinely signed Secure Acceptance response POST.
+
+	Mirrors the shape of the real payloads in People's Bank's integration
+	pack (ResponseParams Success.txt / Fail.txt): a signed field list that
+	names itself, plus unsigned extras CyberSource also posts.
+	"""
+
+	def _build(
+		order_id="SO-0001",
+		decision="ACCEPT",
+		amount="1500.00",
+		auth_amount=None,
+		currency="LKR",
+		profile_id=None,
+		secret=None,
+		signed_field_names=None,
+		extra_signed=None,
+		**unsigned
+	):
+		profile_id = PEOPLES_SANDBOX_PROFILE_ID if profile_id is None else profile_id
+
+		signed = {
+			"transaction_id": "6660635047636132804251",
+			"decision": decision,
+			"req_access_key": PEOPLES_SANDBOX_ACCESS_KEY,
+			"req_profile_id": profile_id,
+			"req_transaction_uuid": "634e1c29e3e95",
+			"req_transaction_type": "sale",
+			"req_reference_number": order_id,
+			"req_amount": amount,
+			"req_currency": currency,
+			"req_locale": "en",
+			"reason_code": "100",
+			"message": "Request was processed successfully.",
+			"signed_date_time": "2026-09-07T03:25:06Z",
+		}
+		if auth_amount is not None:
+			signed["auth_amount"] = auth_amount
+		signed.update(extra_signed or {})
+
+		names = signed_field_names or ([*signed, "signed_field_names"])
+
+		payload = frappe._dict(signed)
+		payload["signed_field_names"] = ",".join(names)
+		payload["signature"] = peoples_bank._sign(
+			peoples_bank._data_to_sign(payload, names), secret or PEOPLES_SANDBOX_SECRET
+		)
+		payload.update(unsigned)
+		return payload
+
+	return _build
+
+
+__all__ = ["webxpay", "payhere", "peoples_bank"]

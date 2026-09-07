@@ -11,17 +11,23 @@ live while still signing with test credentials, or the reverse.
 import pytest
 
 import frappe
-from sl_payment_gateways.gateways import payhere, webxpay
+from sl_payment_gateways.gateways import payhere, peoples_bank, webxpay
 
 from .conftest import (
 	PAYHERE_LIVE_MERCHANT_ID,
 	PAYHERE_LIVE_SECRET,
 	PAYHERE_SANDBOX_MERCHANT_ID,
 	PAYHERE_SANDBOX_SECRET,
+	PEOPLES_LIVE_ACCESS_KEY,
+	PEOPLES_LIVE_PROFILE_ID,
+	PEOPLES_LIVE_SECRET,
+	PEOPLES_SANDBOX_ACCESS_KEY,
+	PEOPLES_SANDBOX_PROFILE_ID,
 	WEBXPAY_LIVE_SECRET,
 	WEBXPAY_SANDBOX_SECRET,
 )
 from .test_payhere import NOTIFY, reference_checkout_hash
+from .test_peoples_bank import reference_signature
 from .test_webxpay import GOOD_RESPONSE, decrypt_payment_field
 
 
@@ -219,3 +225,74 @@ class TestLegacySingleCredentialSet:
 
 	def test_legacy_notification_still_verifies(self, payhere_legacy_settings, payhere_notification):
 		assert payhere.verify_response(payhere_notification())["status"] == "Paid"
+
+
+class TestPeoplesBankModes:
+	"""People's Bank issues a CyberSource *test* profile and a separate
+	live one - different profile id, access key and secret key. The
+	failure worth preventing is going live still signing with the test
+	profile's key, which CyberSource would simply reject, and its mirror:
+	settling a live order on a replayed test response."""
+
+	def test_sandbox_uses_the_test_host_and_its_credentials(self, peoples_bank_settings):
+		result = peoples_bank.build_checkout("SO-1", "1500.00", "LKR", {})
+		fields = result["fields"]
+
+		assert result["checkout_url"] == peoples_bank.SANDBOX_CHECKOUT_URL
+		assert fields["profile_id"] == PEOPLES_SANDBOX_PROFILE_ID
+		assert fields["access_key"] == PEOPLES_SANDBOX_ACCESS_KEY
+		assert fields["signature"] == reference_signature(fields, fields["signed_field_names"].split(","))
+
+	def test_live_uses_the_production_host_and_its_credentials(self, peoples_bank_settings):
+		peoples_bank_settings["use_sandbox"] = 0
+
+		result = peoples_bank.build_checkout("SO-1", "1500.00", "LKR", {})
+		fields = result["fields"]
+
+		assert result["checkout_url"] == peoples_bank.LIVE_CHECKOUT_URL
+		assert fields["profile_id"] == PEOPLES_LIVE_PROFILE_ID
+		assert fields["access_key"] == PEOPLES_LIVE_ACCESS_KEY
+		assert fields["signature"] == reference_signature(
+			fields, fields["signed_field_names"].split(","), secret=PEOPLES_LIVE_SECRET
+		)
+
+	def test_live_checkout_is_not_signed_with_the_sandbox_key(self, peoples_bank_settings):
+		peoples_bank_settings["use_sandbox"] = 0
+
+		fields = peoples_bank.build_checkout("SO-1", "1500.00", "LKR", {})["fields"]
+
+		assert fields["signature"] != reference_signature(
+			fields, fields["signed_field_names"].split(",")
+		)
+
+	def test_sandbox_response_is_rejected_in_live_mode(self, peoples_bank_settings, peoples_bank_response):
+		"""The one that matters: a test response replayed at a live site."""
+		payload = peoples_bank_response()
+		peoples_bank_settings["use_sandbox"] = 0
+
+		with pytest.raises(frappe.ValidationError, match="signature verification failed"):
+			peoples_bank.verify_response(payload)
+
+	def test_live_response_is_rejected_in_sandbox_mode(self, peoples_bank_settings, peoples_bank_response):
+		payload = peoples_bank_response(profile_id=PEOPLES_LIVE_PROFILE_ID, secret=PEOPLES_LIVE_SECRET)
+
+		with pytest.raises(frappe.ValidationError, match="signature verification failed"):
+			peoples_bank.verify_response(payload)
+
+	def test_a_missing_live_secret_names_that_exact_field(self, peoples_bank_settings):
+		peoples_bank_settings["use_sandbox"] = 0
+		object.__getattribute__(peoples_bank_settings, "_passwords")["live_secret_key"] = ""
+
+		# Never falls back to the sandbox key, which would sign a live
+		# checkout with test credentials.
+		with pytest.raises(frappe.ValidationError, match="live_secret_key"):
+			peoples_bank.build_checkout("SO-1", "1.00", "LKR", {})
+
+	def test_the_checkout_url_override_is_per_mode(self, peoples_bank_settings):
+		peoples_bank_settings["sandbox_checkout_url"] = "https://egateway.peoplesbank.lk/uat/index.php"
+		peoples_bank_settings["live_checkout_url"] = "https://egateway.peoplesbank.lk/live/index.php"
+
+		assert peoples_bank.build_checkout("SO-1", "1.00", "LKR", {})["checkout_url"].endswith("/uat/index.php")
+
+		peoples_bank_settings["use_sandbox"] = 0
+		assert peoples_bank.build_checkout("SO-1", "1.00", "LKR", {})["checkout_url"].endswith("/live/index.php")

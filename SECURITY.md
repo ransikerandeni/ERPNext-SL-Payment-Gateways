@@ -207,6 +207,7 @@ Documented at the top of `webxpay.py`.
 
 PayHere is not affected: its `md5sig` is keyed on your merchant secret
 and covers the merchant id, which is checked against your settings.
+Neither is People's Bank — see A1 below.
 
 ### ~~R2. WebXPay's response format is unconfirmed~~ — resolved
 
@@ -220,7 +221,7 @@ future format change into a loud error rather than a silent `Failed`.
 
 ### R3. Replay is possible within the "unsettled" window
 
-Neither gateway sends a nonce or timestamp that this app can pin a
+No gateway here sends a nonce or timestamp that this app can pin a
 response to. Idempotency in the caller's handler (M5) means a replay
 can't change a settled order, but a response replayed before the original
 arrives is indistinguishable from it. Accept this or add your own
@@ -361,10 +362,75 @@ with `node slot_allocation/client_script.test.js`, no dependencies.
   tested against an independently written reference implementation.
 - Signature verification is bound to *every* signed field — a valid
   notification for one order cannot be replayed as another.
-- The three unimplemented bank gateways throw rather than half-work, and
-  are correctly excluded from `list_gateways()`.
+- The two remaining unimplemented bank gateways throw rather than
+  half-work, and are correctly excluded from `list_gateways()`.
 - No SQL is constructed anywhere in the app; no `eval`/`exec`; no
   filesystem access; no outbound network calls.
+
+---
+
+## Addendum — 2026-09-07: People's Bank IPG
+
+`gateways/peoples_bank.py` was a placeholder stub at the time of the
+review above. It is now implemented, against CyberSource's Secure
+Acceptance Hosted Checkout protocol — People's Bank's IPG is a branded
+CyberSource merchant profile, not a scheme of the bank's own. The notes
+below are the parts of the review that change as a result.
+
+### A1. Responses *are* bound to the merchant account
+
+Unlike WebXPay (R1), the HMAC-SHA256 key is issued to our merchant
+profile alone, so a response that verifies was produced by CyberSource
+for our profile. `req_profile_id` is checked against the configured
+profile on top of that, which independently rejects a response signed for
+someone else's. `verify_response()` therefore returns
+`merchant_verified: True`, and a sandbox response replayed at a live site
+fails on both checks at once.
+
+### A2. Only fields inside the response's own signed set are read
+
+CyberSource signs every field it sends, so a field present in the POST
+but absent from the response's `signed_field_names` was added by whoever
+posted to us — their guide's own instruction is to ignore it. The module
+discards those before reading anything, and `raw` carries the verified
+subset only. `decision` or `req_reference_number` arriving *outside* the
+signed set is rejected outright rather than trusted: that is the shape
+this forgery takes, and it is covered by tests in
+`tests/test_peoples_bank.py::TestOnlySignedFieldsAreTrusted`.
+
+### A3. The amount is verifiable, so H3 applies in full
+
+`auth_amount` (authorised) and `req_amount` (requested) are both inside
+the signed set, and `req_currency` with them. `verify_response()` returns
+the authorised figure in preference to the requested one. Unlike
+WebXPay's short response, there is no case here where the caller has
+nothing to compare against — so the amount check in the caller's handler
+is not optional.
+
+### A4. `decision=REVIEW` is `Pending`, not `Paid`
+
+CyberSource's *Types of Notifications* table renders REVIEW on the
+*Accept* hosted page, but the authorisation was declined and only a later
+capture might succeed. Mapping it to `Paid` would settle an order against
+money that may never arrive; it maps to `Pending`.
+
+### A5. Signed/unsigned split on the outbound form
+
+Everything that decides what is charged — `amount`, `currency`,
+`reference_number`, `transaction_type`, `profile_id`, `access_key`,
+`transaction_uuid`, `signed_date_time` — is signed, and so are the
+`override_*` URLs, which is what stops a payer redirecting their own
+receipt POST. Only the billing details and `auth_trans_ref_no` are
+unsigned, matching the bank's own sample; none of them affects the price.
+The `override_*` URLs additionally go through `utils.site_url()` and are
+required to be https, per CyberSource's own rule for those fields.
+
+### A6. Residual
+
+R3 (replay) and R4 (unauthenticated `payment_return`) apply here
+unchanged. `req_transaction_uuid` is unique per attempt and comes back
+signed, so a caller that stores it has a usable de-duplication key —
+which is more than WebXPay or PayHere offer.
 
 ## Reproducing
 

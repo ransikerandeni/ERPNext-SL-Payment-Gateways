@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.4.0 — 2026-09-07
+
+### Added
+
+- **People's Bank IPG is implemented.** Their gateway turned out not to
+  be a scheme of the bank's own: it is a branded **CyberSource (Visa
+  Acceptance) Secure Acceptance Hosted Checkout** merchant profile, and
+  the bank's integration pack ships CyberSource's own guide alongside a
+  PHP sample. `gateways/peoples_bank.py` implements that published
+  protocol — HMAC-SHA256 over an ordered `name=value` list, in both
+  directions — rather than anything guessed. It is now in
+  `api.IMPLEMENTED`, so it appears in `list_gateways()` as a payment
+  option. Setup guide: [docs/peoples_bank.md](docs/peoples_bank.md).
+- **New `Peoples Bank Settings` single doctype**, holding sandbox and
+  live sets of profile ID / access key / secret key with the usual
+  `use_sandbox` switch, plus optional per-mode `checkout_url` overrides
+  for merchants the bank fronts with its own hosted page (their QR
+  "middle page" at `egateway.peoplesbank.lk`). Left blank — the normal
+  case — checkout posts to CyberSource's own endpoint for the mode. It
+  implements `on_payment_request_submission()` returning `False`, the
+  same ERPNext opt-out the other two doctypes use.
+
+### Security properties of the new gateway
+
+- `merchant_verified` is **True**. The HMAC key is issued to our merchant
+  profile alone, and `req_profile_id` is checked against the configured
+  profile on top of that — so unlike WebXPay, a verified response is
+  evidence that *our* account was credited.
+- **Only fields inside the response's own `signed_field_names` are ever
+  read.** CyberSource signs every field it sends, so anything outside
+  that set was added by whoever posted to us. `decision` or
+  `req_reference_number` arriving unsigned is rejected outright rather
+  than trusted, and `raw` carries the verified subset only.
+- **The amount is checkable.** `auth_amount` (authorised) and
+  `req_amount` (requested) both arrive signed, with `req_currency`;
+  `verify_response()` returns the authorised figure in preference. There
+  is no WebXPay-style case here where the caller has nothing to compare
+  against.
+- `decision=REVIEW` maps to **`Pending`**, not `Paid`: the authorisation
+  was declined and only a later capture might succeed.
+- The `override_custom_receipt_page` / `override_custom_cancel_page` /
+  `override_backoffice_post_url` URLs are signed, pinned to this site,
+  and required to be `https://` — CyberSource's own rule for those
+  fields, enforced up front rather than left to fail later as a receipt
+  page the payer never reaches.
+
+See [SECURITY.md](SECURITY.md) §Addendum for the full write-up.
+
 ## 0.3.1 — 2026-08-20
 
 ### Fixed

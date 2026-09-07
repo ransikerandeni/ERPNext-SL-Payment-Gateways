@@ -18,7 +18,7 @@ import string
 import pytest
 
 import frappe
-from sl_payment_gateways.gateways import payhere, webxpay
+from sl_payment_gateways.gateways import payhere, peoples_bank, webxpay
 
 # Exceptions a caller is entitled to see. Anything else is a bug.
 CLEAN = (frappe.ValidationError, frappe.DoesNotExistError)
@@ -159,6 +159,71 @@ class TestPayHereHostileInput:
 			payhere.verify_response(frappe._dict(swapped))
 
 
+class TestPeoplesBankHostileInput:
+	def test_random_form_dicts_never_verify(self, peoples_bank_settings):
+		rng = random.Random(7)
+		keys = ["signature", "signed_field_names", "decision", "req_reference_number", "req_amount"]
+
+		for _ in range(500):
+			with pytest.raises(CLEAN):
+				peoples_bank.verify_response(random_form_dict(rng, keys))
+
+	@pytest.mark.parametrize("signature", HOSTILE_STRINGS)
+	def test_a_forged_signature_never_verifies(
+		self, peoples_bank_settings, peoples_bank_response, signature
+	):
+		payload = peoples_bank_response()
+		payload["signature"] = signature
+
+		with pytest.raises(CLEAN):
+			peoples_bank.verify_response(payload)
+
+	def test_single_character_changes_never_verify(self, peoples_bank_settings, peoples_bank_response):
+		# Every signed field is bound to the signature, so touching any one
+		# of them must break it.
+		genuine = peoples_bank_response()
+
+		for field in genuine["signed_field_names"].split(","):
+			if field == "signed_field_names":
+				continue
+			payload = peoples_bank_response()
+			payload[field] = str(payload.get(field) or "") + "x"
+
+			with pytest.raises(CLEAN):
+				peoples_bank.verify_response(payload)
+
+	def test_bit_flips_in_a_real_signature_never_verify(self, peoples_bank_settings, peoples_bank_response):
+		genuine = peoples_bank_response()
+		raw = bytearray(base64.b64decode(genuine["signature"]))
+
+		rng = random.Random(11)
+		for _ in range(64):
+			flipped = bytearray(raw)
+			flipped[rng.randrange(len(flipped))] ^= 1 << rng.randrange(8)
+			payload = peoples_bank_response()
+			payload["signature"] = base64.b64encode(bytes(flipped)).decode()
+
+			with pytest.raises(CLEAN):
+				peoples_bank.verify_response(payload)
+
+	@pytest.mark.parametrize("value", HOSTILE_VALUES)
+	def test_non_ascii_and_junk_values_are_rejected_not_crashed(
+		self, peoples_bank_settings, peoples_bank_response, value
+	):
+		payload = peoples_bank_response()
+		payload["req_amount"] = value
+
+		with pytest.raises(CLEAN):
+			peoples_bank.verify_response(payload)
+
+	@pytest.mark.parametrize("value", HOSTILE_VALUES)
+	def test_hostile_signed_field_names_are_a_clean_error(self, peoples_bank_settings, value):
+		with pytest.raises(CLEAN):
+			peoples_bank.verify_response(
+				frappe._dict({"signature": "aGk=", "signed_field_names": value})
+			)
+
+
 class TestBuildCheckoutHostileInput:
 	@pytest.mark.parametrize("order_id", HOSTILE_VALUES)
 	def test_webxpay_order_id(self, webxpay_settings, order_id):
@@ -217,3 +282,62 @@ class TestBuildCheckoutHostileInput:
 			assert "\r" not in fields[key] and "\n" not in fields[key], key
 			assert "\x00" not in fields[key], key
 			assert len(fields[key]) <= 100, key
+
+	@pytest.mark.parametrize("value", HOSTILE_VALUES)
+	def test_peoples_bank_urls(self, peoples_bank_settings, value):
+		try:
+			fields = peoples_bank.build_checkout("SO-1", "1.00", "LKR", {"return_url": value})["fields"]
+		except CLEAN:
+			return
+		# Three outcomes are all correct: refused, omitted (the override is
+		# optional, and a falsy value means "not supplied"), or an https URL
+		# on this site - never an off-site receipt page for the payer's
+		# browser to land on.
+		if "override_custom_receipt_page" in fields:
+			assert fields["override_custom_receipt_page"].startswith("https://erp.example.com")
+		else:
+			assert not value
+
+	@pytest.mark.parametrize("value", HOSTILE_VALUES)
+	def test_peoples_bank_customer_fields_never_break_the_form(self, peoples_bank_settings, value):
+		fields = peoples_bank.build_checkout(
+			"SO-1",
+			"1.00",
+			"LKR",
+			{
+				"first_name": value,
+				"last_name": value,
+				"email": value,
+				"address": value,
+				"city": value,
+				"state": value,
+				"country": value,
+				"postal_code": value,
+			},
+		)["fields"]
+
+		# A stray comma or newline in an unsigned field cannot shift the
+		# signed list, but it can still corrupt the POST body.
+		for key in (
+			"bill_to_forename",
+			"bill_to_surname",
+			"bill_to_email",
+			"bill_to_address_line1",
+			"bill_to_address_city",
+			"bill_to_address_state",
+			"bill_to_address_country",
+			"bill_to_address_postal_code",
+		):
+			assert "\r" not in fields[key] and "\n" not in fields[key], key
+			assert "\x00" not in fields[key], key
+
+	@pytest.mark.parametrize("order_id", HOSTILE_VALUES)
+	def test_peoples_bank_order_id(self, peoples_bank_settings, order_id):
+		try:
+			fields = peoples_bank.build_checkout(order_id, "1.00", "LKR", {})["fields"]
+		except CLEAN:
+			return
+		# A comma in reference_number would shift the signed name=value
+		# list and let a signature cover different data than it appears to.
+		assert "," not in fields["reference_number"]
+		assert len(fields["reference_number"]) <= peoples_bank.MAX_ORDER_ID_LENGTH

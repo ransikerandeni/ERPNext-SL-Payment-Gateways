@@ -6,11 +6,13 @@ One guide per gateway, each covering **sandbox** (testing) and **live** (product
 |---|---|---|
 | WebXPay | **[webxpay.md](webxpay.md)** | Implemented |
 | PayHere | **[payhere.md](payhere.md)** | Implemented |
-| People's Bank | — | Not implemented — [why](../sl_payment_gateways/gateways/peoples_bank.py) |
+| People's Bank | **[peoples_bank.md](peoples_bank.md)** | Implemented |
 | Sampath Bank | — | Not implemented — [why](../sl_payment_gateways/gateways/sampath_bank.py) |
 | Commercial Bank | — | Not implemented — [why](../sl_payment_gateways/gateways/commercial_bank.py) |
 
-The three banks have no public developer documentation; their integration specs are only issued to merchants after onboarding. Each module says what would be needed to implement it. They are registered in `api.GATEWAYS` but excluded from `list_gateways()`, so they never appear as a payment option, and calling one throws rather than half-working.
+People's Bank's IPG turned out to be a branded **CyberSource Secure Acceptance Hosted Checkout** profile, so it is implemented against CyberSource's published protocol using the credentials the bank issues — see [peoples_bank.md](peoples_bank.md).
+
+Sampath Bank and Commercial Bank still have no documentation to work from; their integration specs are only issued to merchants after onboarding. Each module says what would be needed to implement it. They are registered in `api.GATEWAYS` but excluded from `list_gateways()`, so they never appear as a payment option, and calling one throws rather than half-working.
 
 ## How sandbox and live are handled
 
@@ -21,7 +23,7 @@ use_sandbox = 1  →  sandbox_*  fields  →  the gateway's test portal
 use_sandbox = 0  →  live_*     fields  →  the gateway's production portal
 ```
 
-This matters because sandbox and live are genuinely separate merchant accounts at both gateways — PayHere's sandbox is a separate deployment that cannot be converted to a live account, and WebXPay's staging portal issues its own RSA key pair. Storing one set and overwriting it on each switch loses the other, and makes it easy to go live still signing with test credentials.
+This matters because sandbox and live are genuinely separate merchant accounts at every gateway — PayHere's sandbox is a separate deployment that cannot be converted to a live account, WebXPay's staging portal issues its own RSA key pair, and People's Bank issues a CyberSource test profile distinct from the production one. Storing one set and overwriting it on each switch loses the other, and makes it easy to go live still signing with test credentials.
 
 Three properties the code enforces, each covered by tests in [`tests/test_modes.py`](../tests/test_modes.py):
 

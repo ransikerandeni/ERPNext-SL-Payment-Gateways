@@ -11,10 +11,10 @@ NOTIFY = "/api/method/gateway_payment_return?gateway=PayHere"
 
 class TestGatewayDispatch:
 	def test_lists_only_working_gateways(self):
-		assert api.list_gateways() == ["WebXPay", "PayHere"]
+		assert api.list_gateways() == ["WebXPay", "PayHere", "Peoples Bank"]
 
 	def test_scaffolded_gateways_are_registered_but_not_offered(self):
-		for name in ("Peoples Bank", "Sampath Bank", "Commercial Bank"):
+		for name in ("Sampath Bank", "Commercial Bank"):
 			assert name in api.GATEWAYS
 			assert name not in api.list_gateways()
 
@@ -24,14 +24,20 @@ class TestGatewayDispatch:
 			assert callable(getattr(module, "verify_response", None)), name
 
 	def test_unimplemented_gateways_refuse_rather_than_half_work(self):
-		for name in ("Peoples Bank", "Sampath Bank", "Commercial Bank"):
+		for name in ("Sampath Bank", "Commercial Bank"):
 			with pytest.raises(frappe.ValidationError, match="not yet configured"):
 				api.GATEWAYS[name].build_checkout("SO-1", "1.00", "LKR", {})
 			with pytest.raises(frappe.ValidationError, match="not yet configured"):
 				api.GATEWAYS[name].verify_response(frappe._dict({}))
 
 	def test_verify_response_returns_the_full_contract(
-		self, payhere_settings, payhere_notification, webxpay_settings, sign_webxpay
+		self,
+		payhere_settings,
+		payhere_notification,
+		webxpay_settings,
+		sign_webxpay,
+		peoples_bank_settings,
+		peoples_bank_response,
 	):
 		# Every implemented gateway must return the same key set, so a
 		# caller can read result["amount"] / result["merchant_verified"]
@@ -46,8 +52,17 @@ class TestGatewayDispatch:
 		)
 		assert set(api.payment_return("WebXPay")) == expected_keys
 
+		frappe.local.form_dict = peoples_bank_response()
+		assert set(api.payment_return("Peoples Bank")) == expected_keys
+
 	def test_merchant_verified_reflects_the_protocol(
-		self, payhere_settings, payhere_notification, webxpay_settings, sign_webxpay
+		self,
+		payhere_settings,
+		payhere_notification,
+		webxpay_settings,
+		sign_webxpay,
+		peoples_bank_settings,
+		peoples_bank_response,
 	):
 		# PayHere's md5sig is keyed on our own secret; WebXPay's signature
 		# is not. Callers rely on this to decide how much a valid
@@ -59,6 +74,10 @@ class TestGatewayDispatch:
 			sign_webxpay("SO-0001|REF|2026-08-14|00|Approved|VISA")
 		)
 		assert api.payment_return("WebXPay")["merchant_verified"] is False
+
+		# People's Bank signs with a key issued to our profile alone.
+		frappe.local.form_dict = peoples_bank_response()
+		assert api.payment_return("Peoples Bank")["merchant_verified"] is True
 
 	def test_unknown_gateway_throws(self):
 		with pytest.raises(frappe.ValidationError, match="Unknown payment gateway"):

@@ -1,12 +1,12 @@
 # SL Payment Gateways
 
-Pluggable Sri Lankan payment gateway integrations for **ERPNext / Frappe**. Currently implemented: **WebXPay** and **PayHere**. Scaffolded and ready to extend: **People's Bank**, **Sampath Bank**, **Commercial Bank** IPGs.
+Pluggable Sri Lankan payment gateway integrations for **ERPNext / Frappe**. Currently implemented: **WebXPay**, **PayHere**, and the **People's Bank IPG**. Scaffolded and ready to extend: **Sampath Bank**, **Commercial Bank** IPGs.
 
 ## Why this exists
 
-Frappe's built-in `payments` app covers PayPal, Stripe, Razorpay, and similar international gateways — but nothing for Sri Lankan payment gateways. Each of those requires real cryptography (RSA signing for WebXPay, MD5 hashing for PayHere) to build and verify a checkout, which **cannot run inside a Frappe Server Script** — the Server Script sandbox has no `import` capability at all (no `hashlib`, no `Crypto`, nothing beyond a small fixed set of builtins).
+Frappe's built-in `payments` app covers PayPal, Stripe, Razorpay, and similar international gateways — but nothing for Sri Lankan payment gateways. Each of those requires real cryptography (RSA signing for WebXPay, MD5 hashing for PayHere, HMAC-SHA256 for People's Bank) to build and verify a checkout, which **cannot run inside a Frappe Server Script** — the Server Script sandbox has no `import` capability at all (no `hashlib`, no `Crypto`, nothing beyond a small fixed set of builtins).
 
-This app is the small piece of real, installable code that has to exist outside the sandbox to do that cryptography. Beyond the two Settings DocTypes it ships for entering credentials (`WebXPay Settings`, `PayHere Settings` — see below), it has no UI of its own — it's a thin API layer your own Server Scripts (or a custom app) call into.
+This app is the small piece of real, installable code that has to exist outside the sandbox to do that cryptography. Beyond the Settings DocTypes it ships for entering credentials (`WebXPay Settings`, `PayHere Settings`, `Peoples Bank Settings` — see below), it has no UI of its own — it's a thin API layer your own Server Scripts (or a custom app) call into.
 
 ## Architecture
 
@@ -48,11 +48,11 @@ It proves the payload was signed by the gateway. It does **not** prove:
 | | |
 |---|---|
 | the order exists, is unsettled, or was set up for this gateway | nothing here reads your records — check it yourself |
-| the right amount was paid | compare `result["amount"]` / `result["currency"]` against your own price. WebXPay reports `None` — its response carries no amount, so confirm the figure in the WebXPay dashboard |
+| the right amount was paid | compare `result["amount"]` / `result["currency"]` against your own price. WebXPay reports `None` on its short response — that payload carries no amount, so confirm the figure in the WebXPay dashboard |
 | this isn't a replay | none of these gateways sends a nonce. Make your handler idempotent and ignore responses for already-settled orders |
 | your merchant account was credited | read `result["merchant_verified"]`. True (PayHere) means the signature is keyed on a secret only you hold, so it does prove this. False (WebXPay) means it does not — corroborate against local state before treating money as received |
 
-PayHere's `md5sig` covers merchant id, order id, amount, currency and status, and the merchant id is checked against your settings — so PayHere notifications are bound to your account. WebXPay's are not.
+PayHere's `md5sig` covers merchant id, order id, amount, currency and status, and the merchant id is checked against your settings — so PayHere notifications are bound to your account. People's Bank's HMAC key is issued to your CyberSource profile alone, and `req_profile_id` is checked too, so those are bound as well. WebXPay's are not.
 
 ### Input handling
 
@@ -86,7 +86,7 @@ bench --site <your-site> console -c "import sl_payment_gateways, Crypto; print('
 No module named 'sl_payment_gateways.sl_payment_gateways'
 ```
 
-Under it sits `doctype/`, holding this app's two Single DocTypes — `webxpay_settings/` and `payhere_settings/` — which is what Frappe walks this folder to find (along with `page/` and `report/` subfolders, of which this app has none). Don't delete this folder for looking unused: `git status` will show it's not empty.
+Under it sits `doctype/`, holding this app's Single DocTypes — `webxpay_settings/`, `payhere_settings/` and `peoples_bank_settings/` — which is what Frappe walks this folder to find (along with `page/` and `report/` subfolders, of which this app has none). Don't delete this folder for looking unused: `git status` will show it's not empty.
 
 ## Setup (per gateway)
 
@@ -96,6 +96,7 @@ Under it sits `doctype/`, holding this app's two Single DocTypes — `webxpay_se
 |---|---|
 | WebXPay | **[docs/webxpay.md](docs/webxpay.md)** |
 | PayHere | **[docs/payhere.md](docs/payhere.md)** |
+| People's Bank | **[docs/peoples_bank.md](docs/peoples_bank.md)** |
 
 Each covers creating the Settings DocType, getting credentials from the right portal, running test payments (including PayHere's sandbox test cards), switching to live, and troubleshooting every error this app can raise. Start there — the summary below is orientation only.
 
@@ -103,7 +104,7 @@ The app has no settings UI of its own: each gateway reads its credentials from a
 
 ### Sandbox and live are separate accounts
 
-Both gateways treat their test and production environments as **entirely separate merchant accounts** — PayHere's sandbox is a separate deployment that cannot be converted to a live account, and WebXPay's staging portal issues its own RSA key pair. So each Settings DocType holds **both** credential sets, and a `use_sandbox` checkbox selects which is used:
+Every gateway treats its test and production environments as **entirely separate merchant accounts** — PayHere's sandbox is a separate deployment that cannot be converted to a live account, WebXPay's staging portal issues its own RSA key pair, and People's Bank issues a CyberSource test profile separate from the production one. So each Settings DocType holds **both** credential sets, and a `use_sandbox` checkbox selects which is used:
 
 ```
 use_sandbox = 1  →  sandbox_*  fields  →  the gateway's test portal
@@ -114,6 +115,7 @@ use_sandbox = 0  →  live_*     fields  →  the gateway's production portal
 |---|---|---|---|
 | `WebXPay Settings` | `sandbox_public_key` (Long Text), `sandbox_secret_key` (Password) | `live_public_key`, `live_secret_key` | `use_sandbox` (Check) |
 | `PayHere Settings` | `sandbox_merchant_id` (Data), `sandbox_merchant_secret` (Password) | `live_merchant_id`, `live_merchant_secret` | `use_sandbox` (Check) |
+| `Peoples Bank Settings` | `sandbox_profile_id`, `sandbox_access_key` (Data), `sandbox_secret_key` (Password) | `live_profile_id`, `live_access_key`, `live_secret_key` | `use_sandbox` (Check) |
 
 A missing credential fails loudly and names the exact field and mode — it never falls back to the other environment's:
 
@@ -145,12 +147,13 @@ def my_create_payment():
 
     return frappe.call(
         function="sl_payment_gateways.api.create_payment",
-        gateway=frappe.form_dict.get("gateway"),   # "WebXPay" or "PayHere"
+        gateway=frappe.form_dict.get("gateway"),   # "WebXPay", "PayHere" or "Peoples Bank"
         order_id=order.name,
         amount=amount,
         currency="LKR",
         first_name="...", last_name="...", email="...", contact_number="...",
-        # PayHere reads these per request; all three must be on this site.
+        # PayHere and People's Bank read these per request; all three
+        # must be on this site (and https for People's Bank).
         notify_url="/api/method/my_app.api.my_payment_return?gateway=PayHere",
         return_url="/app/my-order/%s" % order.name,
         cancel_url="/app/my-order/%s" % order.name,
@@ -160,7 +163,7 @@ def my_create_payment():
 # render an auto-submitting form (POST) or redirect (GET) with these
 ```
 
-`notify_url` is **required** for PayHere and must point at your own handler — the one that actually settles the order. Pointing it at `sl_payment_gateways.api.payment_return` verifies the payload and then discards it, leaving every payment unrecorded.
+`notify_url` is **required** for PayHere (and optional but recommended for People's Bank) and must point at your own handler — the one that actually settles the order. Pointing it at `sl_payment_gateways.api.payment_return` verifies the payload and then discards it, leaving every payment unrecorded.
 
 **Handle the return** (register this as your own whitelisted, `allow_guest=True` method — gateways call it directly with no session/CSRF token, which is safe because `verify_response()` cryptographically verifies the payload before trusting anything):
 ```python
@@ -177,7 +180,8 @@ def my_payment_return():
 
     status = result["status"]
 
-    # `amount` is None for WebXPay - its response carries no amount to check.
+    # `amount` is None when the gateway sends no amount (WebXPay's
+    # short response); PayHere and People's Bank always send one.
     if status == "Paid" and result["amount"]:
         if result["amount"] != ("%.2f" % order.grand_total) or result["currency"] != "LKR":
             frappe.log_error(title="Payment amount mismatch", message=str(result))
@@ -203,7 +207,7 @@ def on_payment_request_submission(self, payment_request):
     return False        # this return value is core's `send_mail` flag
 ```
 
-With it, the request submits, keeps its gateway account, and stays at `Requested` for your return handler to settle — the checkout stays entirely in your own code. Create the `Payment Gateway` record with **Gateway Settings** set to `WebXPay Settings` / `PayHere Settings` and **Gateway Controller left blank** (they're Single DocTypes), then a `Payment Gateway Account` in the currency you charge.
+With it, the request submits, keeps its gateway account, and stays at `Requested` for your return handler to settle — the checkout stays entirely in your own code. Create the `Payment Gateway` record with **Gateway Settings** set to `WebXPay Settings` / `PayHere Settings` / `Peoples Bank Settings` and **Gateway Controller left blank** (they're Single DocTypes), then a `Payment Gateway Account` in the currency you charge.
 
 If you implement a new gateway module, give its Settings doctype the same hook unless you genuinely intend core to drive the checkout.
 
@@ -221,7 +225,7 @@ The Client Script driving this app has its own dependency-free harness, since a 
 node ../slot_allocation/client_script.test.js
 ```
 
-415 tests covering the RSA/PKCS#1 implementation against a real keypair, PayHere's hash scheme against an independently written reference, tampering and forgery attempts on both, sandbox/live credential selection (including that a sandbox payload is rejected in live mode and vice versa), and seeded fuzzing that asserts hostile input can never come back as `Paid` and never escapes as an unhandled exception.
+680 tests covering the RSA/PKCS#1 implementation against a real keypair, PayHere's hash scheme and People's Bank's HMAC-SHA256 scheme against independently written references, tampering and forgery attempts on all three, sandbox/live credential selection (including that a sandbox payload is rejected in live mode and vice versa), People's Bank's rule that only fields inside the response's own signed set are ever read, and seeded fuzzing that asserts hostile input can never come back as `Paid` and never escapes as an unhandled exception.
 
 ## Known open items
 
@@ -235,7 +239,7 @@ node ../slot_allocation/client_script.test.js
 3. Register the module in `sl_payment_gateways/api.py`'s `GATEWAYS` dict, and add its name to `IMPLEMENTED` once it's working.
 4. `bench update --pull` (or however you sync app updates on your bench), `bench restart`.
 
-`gateways/peoples_bank.py`, `sampath_bank.py`, and `commercial_bank.py` are placeholder stubs following this exact pattern — deliberately not guessed implementations, since none of those banks publish public API documentation (they only share an integration spec after a signed merchant agreement). Fill them in once you have a real spec.
+`gateways/sampath_bank.py` and `commercial_bank.py` are placeholder stubs following this exact pattern — deliberately not guessed implementations, since neither bank publishes public API documentation (they only share an integration spec after a signed merchant agreement). Fill them in once you have a real spec. `gateways/peoples_bank.py` started as one of those stubs and is a worked example of what filling one in looks like: the bank's pack turned out to describe a standard CyberSource Secure Acceptance profile, so the module implements that published protocol rather than anything guessed.
 
 ## Updating
 
@@ -264,7 +268,7 @@ bench restart
 bench --site <your-site> uninstall-app sl_payment_gateways
 ```
 
-You'll be prompted to confirm since this is destructive to that site's use of the app. This **does** remove the `WebXPay Settings` / `PayHere Settings` DocTypes and the credentials stored in them — back up that data first (`bench --site <your-site> backup`) if you might reinstall later, since uninstalling and reinstalling gives you a blank Settings doctype, not your old values.
+You'll be prompted to confirm since this is destructive to that site's use of the app. This **does** remove the `WebXPay Settings` / `PayHere Settings` / `Peoples Bank Settings` DocTypes and the credentials stored in them — back up that data first (`bench --site <your-site> backup`) if you might reinstall later, since uninstalling and reinstalling gives you a blank Settings doctype, not your old values.
 
 **2. Remove the app from the bench entirely** (after it's uninstalled from every site that had it):
 
@@ -276,7 +280,7 @@ This deletes `apps/sl_payment_gateways` and removes it from `sites/apps.txt`. Ad
 
 **3. Clean up what the app doesn't own itself:**
 
-`WebXPay Settings` / `PayHere Settings` and their stored credentials go with the app (see step 1). What's *not* app-owned, and so isn't touched by uninstall, is anything you pasted into Desk yourself: delete or disable any Server Scripts / Client Scripts that called this app's whitelisted methods (`sl_payment_gateways.api.*`) before removing the app — they'll start throwing "module not found" errors otherwise, if you're decommissioning the integration rather than just this specific app version.
+`WebXPay Settings` / `PayHere Settings` / `Peoples Bank Settings` and their stored credentials go with the app (see step 1). What's *not* app-owned, and so isn't touched by uninstall, is anything you pasted into Desk yourself: delete or disable any Server Scripts / Client Scripts that called this app's whitelisted methods (`sl_payment_gateways.api.*`) before removing the app — they'll start throwing "module not found" errors otherwise, if you're decommissioning the integration rather than just this specific app version.
 
 ## Changelog
 

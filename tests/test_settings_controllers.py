@@ -12,11 +12,14 @@ import pytest
 from sl_payment_gateways.sl_payment_gateways.doctype.payhere_settings.payhere_settings import (
 	PayHereSettings,
 )
+from sl_payment_gateways.sl_payment_gateways.doctype.peoples_bank_settings.peoples_bank_settings import (
+	PeoplesBankSettings,
+)
 from sl_payment_gateways.sl_payment_gateways.doctype.webxpay_settings.webxpay_settings import (
 	WebXPaySettings,
 )
 
-SETTINGS_CLASSES = (WebXPaySettings, PayHereSettings)
+SETTINGS_CLASSES = (WebXPaySettings, PayHereSettings, PeoplesBankSettings)
 
 
 @pytest.mark.parametrize("settings_class", SETTINGS_CLASSES)
