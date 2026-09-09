@@ -163,7 +163,14 @@ class TestBuildCheckout:
 	):
 		# bill_to_address_country is String(2): truncating "Sri Lanka" to
 		# "Sr" would have CyberSource reject the whole request.
-		fields = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {"country": country})["fields"]
+		# state/postal supplied throughout: a non-LK country without them
+		# is refused outright, which is TestOptionalBillingFields' subject.
+		fields = peoples_bank.build_checkout(
+			"SO-0001",
+			"1500.00",
+			"LKR",
+			{"country": country, "state": "CA", "postal_code": "94105"},
+		)["fields"]
 
 		assert fields["bill_to_address_country"] == expected
 
@@ -172,6 +179,64 @@ class TestBuildCheckout:
 
 		assert fields["bill_to_forename"] == "Customer"
 		assert fields["bill_to_email"] == "null@cybersource.com"
+		assert fields["bill_to_address_country"] == "LK"
+
+
+class TestOptionalBillingFields:
+	"""State and postal code are dropped rather than sent empty.
+
+	CyberSource reads a field named in unsigned_field_names but posted
+	with an empty value as supplied-and-invalid, and declines the whole
+	transaction (reason_code 102) - which is what a People's Bank test
+	payment did until these were omitted.
+	"""
+
+	def test_dropped_entirely_when_the_caller_has_no_value(self, peoples_bank_settings):
+		fields = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
+
+		unsigned = fields["unsigned_field_names"].split(",")
+
+		for name in ("bill_to_address_state", "bill_to_address_postal_code"):
+			assert name not in fields
+			assert name not in unsigned
+
+	def test_whitespace_only_values_count_as_absent(self, peoples_bank_settings):
+		fields = peoples_bank.build_checkout(
+			"SO-0001", "1500.00", "LKR", {"state": "   ", "postal_code": "\t"}
+		)["fields"]
+
+		assert "bill_to_address_state" not in fields
+		assert "bill_to_address_postal_code" not in fields
+
+	def test_sent_and_named_when_present(self, peoples_bank_settings):
+		fields = peoples_bank.build_checkout(
+			"SO-0001", "1500.00", "LKR", {"state": "Western", "postal_code": "00700"}
+		)["fields"]
+
+		unsigned = fields["unsigned_field_names"].split(",")
+
+		assert fields["bill_to_address_state"] == "Western"
+		assert fields["bill_to_address_postal_code"] == "00700"
+		assert "bill_to_address_state" in unsigned
+		assert "bill_to_address_postal_code" in unsigned
+
+	@pytest.mark.parametrize(
+		"customer",
+		[
+			{"country": "US"},
+			{"country": "US", "state": "CA"},
+			{"country": "US", "postal_code": "94105"},
+		],
+	)
+	def test_non_lk_billing_country_requires_both(self, peoples_bank_settings, customer):
+		# The bank's own rule. Failing here beats building a hosted page
+		# the payer can only be declined on.
+		with pytest.raises(frappe.ValidationError):
+			peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", customer)
+
+	def test_lk_billing_country_does_not_require_them(self, peoples_bank_settings):
+		fields = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {"country": "LK"})["fields"]
+
 		assert fields["bill_to_address_country"] == "LK"
 
 

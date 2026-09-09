@@ -149,10 +149,30 @@ UNSIGNED_FIELDS = (
 	"bill_to_email",
 	"bill_to_address_line1",
 	"bill_to_address_city",
-	"bill_to_address_state",
 	"bill_to_address_country",
+)
+
+# Named in unsigned_field_names only when we actually have a value.
+#
+# CyberSource reads a field that is *named* in signed/unsigned_field_names
+# but carries an empty value as supplied-and-invalid rather than as
+# omitted, and rejects the request (reason_code 102). People's Bank
+# support put it plainly: "in the last request these are sent with null
+# values - if you are not sending it drop it."
+#
+# They are not optional everywhere, though: the bank requires both once
+# the billing country is not LK, and CyberSource requires them for US and
+# Canadian billing addresses regardless. Hence the check in
+# build_checkout() rather than a silent omission.
+OPTIONAL_BILLING_FIELDS = (
+	"bill_to_address_state",
 	"bill_to_address_postal_code",
 )
+
+# The billing country assumed when the payer record does not carry a
+# usable two-letter code, and the one country for which the bank does not
+# insist on state and postal code.
+DEFAULT_COUNTRY = "LK"
 
 # decision -> our status. From the guide's "Types of Notifications" table.
 #   ACCEPT  - settled (reason codes 100, 110).
@@ -264,7 +284,7 @@ def _country_code(value):
 	"""
 	code = str(value or "").strip().upper()
 
-	return code if len(code) == 2 and code.isalpha() else "LK"
+	return code if len(code) == 2 and code.isalpha() else DEFAULT_COUNTRY
 
 
 def _sign(data: str, secret_key: str) -> str:
@@ -294,6 +314,20 @@ def build_checkout(order_id, amount, currency, customer):
 
 	settings = _settings()
 
+	country = _country_code(customer.get("country"))
+	state = clean_text(customer.get("state"), 20)
+	postal_code = clean_text(customer.get("postal_code"), 10)
+
+	# Refused here rather than sent and declined at CyberSource: outside
+	# Sri Lanka the bank requires both, so a checkout built without them
+	# is a hosted page the payer can only fail on.
+	if country != DEFAULT_COUNTRY and not (state and postal_code):
+		frappe.throw(
+			"People's Bank needs a billing state/province and postal code for a billing "
+			"address outside Sri Lanka (country %s). Record both against the payer before "
+			"starting the checkout." % (frappe.utils.escape_html(country),)
+		)
+
 	fields = {
 		"access_key": _access_key(settings),
 		"profile_id": _profile_id(settings),
@@ -318,10 +352,16 @@ def build_checkout(order_id, amount, currency, customer):
 			customer.get("address") or customer.get("organization"), 60, "N/A"
 		),
 		"bill_to_address_city": clean_text(customer.get("city"), 50, "Colombo"),
-		"bill_to_address_state": clean_text(customer.get("state"), 20),
-		"bill_to_address_country": _country_code(customer.get("country")),
-		"bill_to_address_postal_code": clean_text(customer.get("postal_code"), 10),
+		"bill_to_address_country": country,
 	}
+
+	# Added only when non-empty - see OPTIONAL_BILLING_FIELDS.
+	for field, value in (
+		("bill_to_address_state", state),
+		("bill_to_address_postal_code", postal_code),
+	):
+		if value:
+			fields[field] = value
 
 	# Optional, and signed when present - see OVERRIDE_FIELDS. Each is
 	# pinned to this site by site_url() so a caller cannot turn the
@@ -337,8 +377,12 @@ def build_checkout(order_id, amount, currency, customer):
 
 	signed_field_names = list(SIGNED_FIELDS) + [f for f in OVERRIDE_FIELDS if f in fields]
 
+	unsigned_field_names = list(UNSIGNED_FIELDS) + [
+		f for f in OPTIONAL_BILLING_FIELDS if f in fields
+	]
+
 	fields["signed_field_names"] = ",".join(signed_field_names)
-	fields["unsigned_field_names"] = ",".join(UNSIGNED_FIELDS)
+	fields["unsigned_field_names"] = ",".join(unsigned_field_names)
 	fields["signature"] = _sign(_data_to_sign(fields, signed_field_names), _secret_key(settings))
 
 	return {

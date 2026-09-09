@@ -328,8 +328,11 @@ class TestBuildCheckoutHostileInput:
 			"bill_to_address_country",
 			"bill_to_address_postal_code",
 		):
-			assert "\r" not in fields[key] and "\n" not in fields[key], key
-			assert "\x00" not in fields[key], key
+			# state/postal are dropped when they clean to empty, so an
+			# absent key here is the intended outcome, not a miss.
+			value = fields.get(key, "")
+			assert "\r" not in value and "\n" not in value, key
+			assert "\x00" not in value, key
 
 	@pytest.mark.parametrize("order_id", HOSTILE_VALUES)
 	def test_peoples_bank_order_id(self, peoples_bank_settings, order_id):
