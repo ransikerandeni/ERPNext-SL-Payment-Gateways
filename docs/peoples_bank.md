@@ -80,6 +80,7 @@ To open it: type `Peoples Bank Settings` into the Desk awesome-bar. Fields:
 | Sandbox Access Key | `sandbox_access_key` | Data | 32 hex characters |
 | Sandbox Secret Key | `sandbox_secret_key` | Password | Long hex string — the HMAC key |
 | Sandbox Checkout URL | `sandbox_checkout_url` | Data | Optional, see below |
+| Use CyberSource Test Billing Data | `use_test_billing_data` | Check | Default `0`. Sandbox only — see below |
 | Live Profile ID | `live_profile_id` | Data | A **different** profile from the test one |
 | Live Access Key | `live_access_key` | Data | |
 | Live Secret Key | `live_secret_key` | Password | |
@@ -128,6 +129,30 @@ print(result["fields"]["signature"])   # non-empty
 ```
 
 Then run a real test payment through your own checkout page. Card numbers and test scenarios come from CyberSource's test-guide links in the bank's pack; `4111 1111 1111 1111` with any future expiry is the standard Visa test card. Confirm the result in the Business Center's transaction search as well as in your own records.
+
+**If a sandbox payment declines and you suspect the billing address**, tick
+**Use CyberSource Test Billing Data**. The test environment's fraud and AVS
+rules are tuned for CyberSource's own dummy address, so a real Sri Lankan one
+can be declined there for reasons that would never apply live — and their
+sandbox activation mail asks you to use the dummy set when you are not testing
+with real data. Ticking it replaces the payer's name, email and full billing
+address with:
+
+```
+bill_to_forename            noreal
+bill_to_surname             name
+bill_to_email               null@cybersource.com
+bill_to_address_line1       1295 Charleston Rd
+bill_to_address_city        Mountain View
+bill_to_address_state       CA
+bill_to_address_country     US
+bill_to_address_postal_code 94043
+```
+
+It is ignored entirely unless **Use Sandbox** is also ticked, so a checkbox
+left on cannot bill a live card to a Mountain View address. Untick it before
+testing the billing address path itself — with it on, your own prompt and
+whatever it collects are never exercised.
 
 ### Decision values
 

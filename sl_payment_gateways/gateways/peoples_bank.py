@@ -174,6 +174,32 @@ OPTIONAL_BILLING_FIELDS = (
 # insist on state and postal code.
 DEFAULT_COUNTRY = "LK"
 
+# CyberSource's own test billing address, handed out in the sandbox
+# activation mail ("use the standard dummy billing information if you are
+# not using real life data"). Their test environment is shared, and its
+# fraud and AVS rules are tuned for this address - a real Sri Lankan one
+# can be declined there for reasons that would never apply live, which is
+# exactly the kind of false signal that wastes a day of testing.
+#
+# Used only when `use_test_billing_data` is ticked in Settings AND the
+# sandbox is active. The sandbox condition is not redundant: it is what
+# makes it impossible to charge a live card against a Mountain View
+# address because somebody left a checkbox on.
+#
+# Note this replaces the payer's name and email too. That is the point -
+# it is a complete stand-in, not a partial one, and a half-real address is
+# neither testable nor honest.
+TEST_BILLING_ADDRESS = {
+	"bill_to_forename": "noreal",
+	"bill_to_surname": "name",
+	"bill_to_email": "null@cybersource.com",
+	"bill_to_address_line1": "1295 Charleston Rd",
+	"bill_to_address_city": "Mountain View",
+	"bill_to_address_state": "CA",
+	"bill_to_address_country": "US",
+	"bill_to_address_postal_code": "94043",
+}
+
 # decision -> our status. From the guide's "Types of Notifications" table.
 #   ACCEPT  - settled (reason codes 100, 110).
 #   REVIEW  - authorisation declined, capture *might* still be possible.
@@ -314,19 +340,47 @@ def build_checkout(order_id, amount, currency, customer):
 
 	settings = _settings()
 
-	country = _country_code(customer.get("country"))
-	state = clean_text(customer.get("state"), 20)
-	postal_code = clean_text(customer.get("postal_code"), 10)
+	# Both conditions, and the sandbox one is the load-bearing half: a
+	# ticked checkbox must never be able to send Mountain View to a live
+	# card. An absent field (the app updated, the doctype not yet migrated)
+	# reads as off.
+	use_test_billing = bool(is_sandbox(settings)) and bool(settings.get("use_test_billing_data"))
 
-	# Refused here rather than sent and declined at CyberSource: outside
-	# Sri Lanka the bank requires both, so a checkout built without them
-	# is a hosted page the payer can only fail on.
-	if country != DEFAULT_COUNTRY and not (state and postal_code):
-		frappe.throw(
-			"People's Bank needs a billing state/province and postal code for a billing "
-			"address outside Sri Lanka (country %s). Record both against the payer before "
-			"starting the checkout." % (frappe.utils.escape_html(country),)
-		)
+	if use_test_billing:
+		# Wholesale, including the name and email - see TEST_BILLING_ADDRESS.
+		# No country check: the test address carries a state and a postal
+		# code already, so there is nothing the rule below would catch.
+		billing = dict(TEST_BILLING_ADDRESS)
+	else:
+		country = _country_code(customer.get("country"))
+		state = clean_text(customer.get("state"), 20)
+		postal_code = clean_text(customer.get("postal_code"), 10)
+
+		# Refused here rather than sent and declined at CyberSource: outside
+		# Sri Lanka the bank requires both, so a checkout built without them
+		# is a hosted page the payer can only fail on.
+		if country != DEFAULT_COUNTRY and not (state and postal_code):
+			frappe.throw(
+				"People's Bank needs a billing state/province and postal code for a billing "
+				"address outside Sri Lanka (country %s). Record both against the payer before "
+				"starting the checkout." % (frappe.utils.escape_html(country),)
+			)
+
+		billing = {
+			# CyberSource's hosted page collects billing details itself, but a
+			# profile configured to require them still needs something to
+			# prefill - these placeholders match the bank's sample pack.
+			"bill_to_forename": clean_text(customer.get("first_name"), 60, "Customer"),
+			"bill_to_surname": clean_text(customer.get("last_name"), 60, "-"),
+			"bill_to_email": clean_text(customer.get("email"), 255, "null@cybersource.com"),
+			"bill_to_address_line1": clean_text(
+				customer.get("address") or customer.get("organization"), 60, "N/A"
+			),
+			"bill_to_address_city": clean_text(customer.get("city"), 50, "Colombo"),
+			"bill_to_address_country": country,
+			"bill_to_address_state": state,
+			"bill_to_address_postal_code": postal_code,
+		}
 
 	fields = {
 		"access_key": _access_key(settings),
@@ -342,26 +396,13 @@ def build_checkout(order_id, amount, currency, customer):
 		"currency": currency,
 		# Reconciliation reference the bank shows against the transaction.
 		"auth_trans_ref_no": order_id,
-		# CyberSource's hosted page collects billing details itself, but a
-		# profile configured to require them still needs something to
-		# prefill - these placeholders match the bank's sample pack.
-		"bill_to_forename": clean_text(customer.get("first_name"), 60, "Customer"),
-		"bill_to_surname": clean_text(customer.get("last_name"), 60, "-"),
-		"bill_to_email": clean_text(customer.get("email"), 255, "null@cybersource.com"),
-		"bill_to_address_line1": clean_text(
-			customer.get("address") or customer.get("organization"), 60, "N/A"
-		),
-		"bill_to_address_city": clean_text(customer.get("city"), 50, "Colombo"),
-		"bill_to_address_country": country,
 	}
 
-	# Added only when non-empty - see OPTIONAL_BILLING_FIELDS.
-	for field, value in (
-		("bill_to_address_state", state),
-		("bill_to_address_postal_code", postal_code),
-	):
-		if value:
-			fields[field] = value
+	for name, value in billing.items():
+		# State and postal code are dropped when blank rather than sent
+		# empty - see OPTIONAL_BILLING_FIELDS. Everything else always goes.
+		if value or name not in OPTIONAL_BILLING_FIELDS:
+			fields[name] = value
 
 	# Optional, and signed when present - see OVERRIDE_FIELDS. Each is
 	# pinned to this site by site_url() so a caller cannot turn the

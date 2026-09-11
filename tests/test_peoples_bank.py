@@ -240,6 +240,90 @@ class TestOptionalBillingFields:
 		assert fields["bill_to_address_country"] == "LK"
 
 
+class TestCyberSourceTestBillingData:
+	"""`use_test_billing_data`, honoured in sandbox only.
+
+	CyberSource's test environment tunes its fraud and AVS rules for its own
+	dummy address, so a real Sri Lankan one can be declined there for reasons
+	that would never apply live. The flag takes that variable off the table -
+	but only in sandbox, which is what stops a stray checkbox billing a live
+	card to Mountain View.
+	"""
+
+	def test_replaces_the_whole_billing_set_in_sandbox(self, peoples_bank_settings):
+		peoples_bank_settings["use_test_billing_data"] = 1
+
+		fields = peoples_bank.build_checkout(
+			"SO-0001",
+			"1500.00",
+			"LKR",
+			{
+				"first_name": "Ransike",
+				"last_name": "Randeni",
+				"email": "ransike@example.com",
+				"address": "UCSC",
+				"city": "Colombo",
+				"country": "LK",
+			},
+		)["fields"]
+
+		assert fields["bill_to_forename"] == "noreal"
+		assert fields["bill_to_surname"] == "name"
+		assert fields["bill_to_email"] == "null@cybersource.com"
+		assert fields["bill_to_address_line1"] == "1295 Charleston Rd"
+		assert fields["bill_to_address_city"] == "Mountain View"
+		assert fields["bill_to_address_state"] == "CA"
+		assert fields["bill_to_address_country"] == "US"
+		assert fields["bill_to_address_postal_code"] == "94043"
+
+	def test_state_and_postal_are_named_in_unsigned_fields(self, peoples_bank_settings):
+		# The test address carries both, so both must be declared - a value
+		# sent without its name in unsigned_field_names is dropped by
+		# CyberSource, which would put us back to an address missing a state.
+		peoples_bank_settings["use_test_billing_data"] = 1
+
+		fields = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
+		unsigned = fields["unsigned_field_names"].split(",")
+
+		assert "bill_to_address_state" in unsigned
+		assert "bill_to_address_postal_code" in unsigned
+
+	def test_ignored_when_the_live_profile_is_active(self, peoples_bank_settings):
+		# The whole safety property: a ticked box must not be able to bill a
+		# live card to a Mountain View address.
+		peoples_bank_settings["use_test_billing_data"] = 1
+		peoples_bank_settings["use_sandbox"] = 0
+
+		fields = peoples_bank.build_checkout(
+			"SO-0001", "1500.00", "LKR", {"first_name": "Ransike", "country": "LK"}
+		)["fields"]
+
+		assert fields["bill_to_forename"] == "Ransike"
+		assert fields["bill_to_address_country"] == "LK"
+		assert fields["bill_to_address_city"] == "Colombo"
+
+	def test_off_by_default(self, peoples_bank_settings):
+		# Including on a site whose doctype has not been migrated yet - the
+		# field is simply absent there, and absent must read as off.
+		fields = peoples_bank.build_checkout(
+			"SO-0001", "1500.00", "LKR", {"first_name": "Ransike", "country": "LK"}
+		)["fields"]
+
+		assert fields["bill_to_forename"] == "Ransike"
+		assert fields["bill_to_address_country"] == "LK"
+
+	def test_signature_still_covers_the_same_signed_fields(self, peoples_bank_settings):
+		# Billing is unsigned either way, so switching the flag must not move
+		# anything into or out of the signed set.
+		peoples_bank_settings["use_test_billing_data"] = 1
+		with_test = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
+
+		peoples_bank_settings["use_test_billing_data"] = 0
+		without = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
+
+		assert with_test["signed_field_names"] == without["signed_field_names"]
+
+
 class TestOverrideUrls:
 	def test_absent_when_the_caller_supplies_none(self, peoples_bank_settings):
 		fields = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]

@@ -11,6 +11,7 @@
   "sandbox_access_key",
   "sandbox_secret_key",
   "sandbox_checkout_url",
+  "use_test_billing_data",
   "live_section",
   "live_profile_id",
   "live_access_key",
@@ -53,6 +54,14 @@
    "fieldname": "sandbox_checkout_url",
    "fieldtype": "Data",
    "label": "Sandbox Checkout URL"
+  },
+  {
+   "fieldname": "use_test_billing_data",
+   "fieldtype": "Check",
+   "label": "Use CyberSource Test Billing Data",
+   "default": "0",
+   "depends_on": "eval:doc.use_sandbox",
+   "description": "Sandbox only. Replaces the payer's name, email and billing address with CyberSource's standard test values (noreal name, 1295 Charleston Rd, Mountain View, CA 94043, US). Use it to take the billing address out of the picture while debugging a decline. Ignored entirely when Use Sandbox is off, so it can never reach a live charge."
   },
   {
    "fieldname": "live_section",
