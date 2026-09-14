@@ -100,6 +100,52 @@ def list_gateways():
 	return list(IMPLEMENTED)
 
 
+# What a gateway charges in when its module says nothing. Every gateway here
+# except People's Bank collects LKR natively and has no second option, so the
+# static default is the honest answer for them rather than a placeholder.
+DEFAULT_CURRENCIES = ("LKR",)
+
+
+def gateway_currencies(gateway):
+	"""The currencies `gateway` will accept a checkout in, preferred first.
+
+	A module may answer dynamically with `supported_currencies()` - People's
+	Bank does, because LKR is gated on a Settings checkbox - or statically with
+	a `CURRENCIES` tuple, or not at all.
+
+	A module that answers dynamically is reading Settings, and Settings can be
+	missing on a site where the gateway was never configured. That must not
+	take down a caller whose only question was "what can I offer?", so a
+	failure falls back to the module's static answer and is logged.
+	"""
+	module = _get_gateway(gateway)
+
+	resolver = getattr(module, "supported_currencies", None)
+
+	if resolver:
+		try:
+			return list(resolver())
+		except Exception:
+			frappe.log_error(
+				title="Could not read %s supported currencies" % (gateway,),
+				message=frappe.get_traceback(),
+			)
+
+	return list(getattr(module, "CURRENCIES", DEFAULT_CURRENCIES))
+
+
+@frappe.whitelist()
+def list_gateway_currencies():
+	"""{gateway name: [currency, ...]} for every implemented gateway.
+
+	Whitelisted alongside list_gateways() and for the same reason: a front end
+	should render the currencies a gateway actually accepts today, not a list
+	hardcoded in a client script that nobody updates when Settings change.
+	Reveals no credential and changes no state.
+	"""
+	return {name: gateway_currencies(name) for name in IMPLEMENTED}
+
+
 @frappe.whitelist()
 def create_payment(gateway, order_id, amount, currency="LKR", **customer):
 	"""Build a signed checkout. NOT a public endpoint - see the module docstring.

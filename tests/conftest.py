@@ -41,12 +41,15 @@ PEOPLES_LIVE_SECRET = "1" * 40 + "live" + "e" * 20
 
 @pytest.fixture(autouse=True)
 def clean_frappe():
-	"""Every test starts with an empty form_dict and no configured doctypes."""
+	"""Every test starts with an empty form_dict, no configured doctypes, and
+	nothing in the error log."""
+	frappe.error_log.clear()
 	frappe.local.form_dict = frappe._dict()
 	frappe.local.request = None
 	frappe.local.cookie_manager = None
 	frappe.test_docs.clear()
 	yield
+	frappe.error_log.clear()
 	frappe.local.form_dict = frappe._dict()
 	frappe.local.request = None
 	frappe.local.cookie_manager = None
@@ -184,7 +187,34 @@ def payhere_notification():
 
 @pytest.fixture
 def peoples_bank_settings():
-	"""Both credential sets present, sandbox active."""
+	"""Both credential sets present, sandbox active, LKR allowed.
+
+	`allow_lkr` is on because most tests here are about the Secure Acceptance
+	protocol - what gets signed, in what order - and they price in LKR. Leaving
+	the gate closed would make them all assert the gate instead. The gate has
+	its own tests (TestCurrencyGate) and its own fixture below, which is where
+	the shipped default of "off" is pinned down.
+	"""
+	frappe.test_docs["Peoples Bank Settings"] = frappe_stub.FakeSettingsDoc(
+		{
+			"use_sandbox": 1,
+			"allow_lkr": 1,
+			"sandbox_profile_id": PEOPLES_SANDBOX_PROFILE_ID,
+			"sandbox_access_key": PEOPLES_SANDBOX_ACCESS_KEY,
+			"live_profile_id": PEOPLES_LIVE_PROFILE_ID,
+			"live_access_key": PEOPLES_LIVE_ACCESS_KEY,
+		},
+		passwords={
+			"sandbox_secret_key": PEOPLES_SANDBOX_SECRET,
+			"live_secret_key": PEOPLES_LIVE_SECRET,
+		},
+	)
+	return frappe.test_docs["Peoples Bank Settings"]
+
+
+@pytest.fixture
+def peoples_bank_usd_only_settings():
+	"""The shipped default: LKR not yet enabled on the CyberSource profile."""
 	frappe.test_docs["Peoples Bank Settings"] = frappe_stub.FakeSettingsDoc(
 		{
 			"use_sandbox": 1,
@@ -207,6 +237,9 @@ def peoples_bank_legacy_settings():
 	frappe.test_docs["Peoples Bank Settings"] = frappe_stub.FakeSettingsDoc(
 		{
 			"use_sandbox": 1,
+			# Same reason as peoples_bank_settings: this fixture exists to
+			# exercise the legacy credential fields, not the currency gate.
+			"allow_lkr": 1,
 			"profile_id": PEOPLES_SANDBOX_PROFILE_ID,
 			"access_key": PEOPLES_SANDBOX_ACCESS_KEY,
 		},

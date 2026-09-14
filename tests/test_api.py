@@ -4,6 +4,7 @@ import pytest
 
 import frappe
 from sl_payment_gateways import api
+from sl_payment_gateways.gateways import peoples_bank
 
 CREATE_PAYMENT_CMD = "sl_payment_gateways.api.create_payment"
 NOTIFY = "/api/method/gateway_payment_return?gateway=PayHere"
@@ -91,6 +92,62 @@ class TestGatewayDispatch:
 
 		assert "<img" not in str(excinfo.value)
 		assert "&lt;img" in str(excinfo.value)
+
+
+class TestGatewayCurrencies:
+	"""What each gateway reports it will charge in.
+
+	Front ends render their currency control from this, so "no answer" has to
+	degrade to a usable one rather than to an empty control or an exception -
+	a participant must never lose the ability to pay because a lookup failed.
+	"""
+
+	def test_a_gateway_with_one_currency_reports_it(self):
+		# WebXPay and PayHere collect LKR natively and have no second option,
+		# so the static default is the honest answer rather than a placeholder.
+		assert api.gateway_currencies("WebXPay") == ["LKR"]
+		assert api.gateway_currencies("PayHere") == ["LKR"]
+
+	def test_peoples_bank_reports_what_its_settings_allow(
+		self, peoples_bank_usd_only_settings
+	):
+		assert api.gateway_currencies("Peoples Bank") == ["USD"]
+
+	def test_peoples_bank_gains_lkr_when_it_is_enabled(self, peoples_bank_settings):
+		assert api.gateway_currencies("Peoples Bank") == ["USD", "LKR"]
+
+	def test_unreadable_settings_fall_back_to_the_static_answer(self, monkeypatch):
+		# No Peoples Bank Settings fixture: _settings() throws. A front end
+		# asking "what can I offer?" gets the module's static answer, never an
+		# exception - the alternative is a payment screen with no Pay button.
+		def explode():
+			raise RuntimeError("Settings gone")
+
+		monkeypatch.setattr(peoples_bank, "supported_currencies", explode)
+
+		assert api.gateway_currencies("Peoples Bank") == list(peoples_bank.CURRENCIES)
+
+		# Silently, though, is not the same as invisibly: a site whose gateway
+		# settings cannot be read has something wrong with it.
+		assert [e["title"] for e in frappe.error_log] == [
+			"Could not read Peoples Bank supported currencies"
+		]
+
+	def test_the_static_fallback_is_never_wider_than_the_gate(self):
+		# CURRENCIES is what a caller gets when Settings cannot be read, so it
+		# must not offer a currency the gate would have withheld.
+		assert set(peoples_bank.CURRENCIES) == {"USD"}
+
+	def test_lists_every_implemented_gateway(self, peoples_bank_settings):
+		reported = api.list_gateway_currencies()
+
+		assert sorted(reported) == sorted(api.list_gateways())
+		assert reported["Peoples Bank"] == ["USD", "LKR"]
+		assert reported["WebXPay"] == ["LKR"]
+
+	def test_an_unknown_gateway_is_refused_rather_than_guessed(self):
+		with pytest.raises(frappe.ValidationError, match="Unknown payment gateway"):
+			api.gateway_currencies("Bank of Nowhere")
 
 
 class TestCreatePaymentIsNotAPublicEndpoint:

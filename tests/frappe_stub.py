@@ -11,6 +11,7 @@ than quietly exercising a mock that agrees with everything.
 """
 
 import sys
+import traceback
 import types
 
 
@@ -95,9 +96,22 @@ def build_module(site_url="https://erp.example.com"):
 
 		return decorator
 
+	def log_error(title=None, message=None, **kwargs):
+		"""Collect rather than write. Code under test logs where it chooses to
+		carry on instead of throwing, and a test that asserts it carried on
+		should be able to assert it said so - so the entries are kept on
+		`frappe.error_log` for tests to read."""
+		frappe.error_log.append({"title": title, "message": message})
+
+	def get_traceback():
+		return traceback.format_exc()
+
+	frappe.error_log = []
 	frappe.throw = throw
 	frappe.get_doc = get_doc
 	frappe.whitelist = whitelist
+	frappe.log_error = log_error
+	frappe.get_traceback = get_traceback
 
 	# frappe.form_dict is a proxy onto frappe.local in the real thing;
 	# a property on the module type is the closest simple equivalent.

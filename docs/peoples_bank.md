@@ -4,6 +4,7 @@ Covers both environments: **Sandbox** (CyberSource's test host, for testing) and
 
 - [How People's Bank works here](#how-peoples-bank-works-here)
 - [1. Find the Settings DocType](#1-find-the-settings-doctype)
+- [Currencies](#currencies)
 - [2. Sandbox setup](#2-sandbox-setup)
 - [3. Testing in sandbox](#3-testing-in-sandbox)
 - [4. Going live](#4-going-live)
@@ -76,6 +77,7 @@ To open it: type `Peoples Bank Settings` into the Desk awesome-bar. Fields:
 | Label | Fieldname | Type | Notes |
 |---|---|---|---|
 | Use Sandbox | `use_sandbox` | Check | Default `1`. Ticked = CyberSource test host, unticked = live |
+| Allow LKR Charges | `allow_lkr` | Check | Default `0`. Unticked = USD only. See [Currencies](#currencies) |
 | Sandbox Profile ID | `sandbox_profile_id` | Data | A UUID, e.g. `3DEEB7C4-3568-4CDF-8247-1A15527CD3B2` |
 | Sandbox Access Key | `sandbox_access_key` | Data | 32 hex characters |
 | Sandbox Secret Key | `sandbox_secret_key` | Password | Long hex string — the HMAC key |
@@ -89,6 +91,33 @@ To open it: type `Peoples Bank Settings` into the Desk awesome-bar. Fields:
 **The two Checkout URL fields are almost always left blank.** Blank means "post to CyberSource's own endpoint for this mode", which is what a standard Secure Acceptance profile wants. Set one only if People's Bank has put you behind their **own** hosted front end — their QR "middle page" at `egateway.peoplesbank.lk`, which takes the same signed fields at a different URL. Whatever you set must be `https://`.
 
 > The access key is **not** a secret: it is posted from the browser as part of the checkout form, by design. The **secret key is** — it is the HMAC key, and anyone holding it can sign a payment for your profile. It never leaves the server.
+
+---
+
+## Currencies
+
+This gateway will sign a checkout in **USD** always, and in **LKR** only when
+**Allow LKR Charges** is ticked. `supported_currencies()` is the single answer
+to "what will it take?", and `build_checkout()` refuses anything outside it
+before signing a thing.
+
+**Leave the checkbox off until People's Bank has enabled LKR on your
+CyberSource profile.** A profile without it rejects the currency outright:
+
+```
+decision=ERROR  reason_code=102  invalid_fields=currency
+```
+
+That is not a decline the payer can do anything about — they reach the hosted
+page, see a card form, and cannot pay. Offering a currency that always fails is
+worse than not offering it, which is why the default is off rather than
+optimistic. Confirm with the bank, tick it, put one LKR payment through the
+sandbox, and only then let it reach live payers.
+
+A caller that wants to render a currency control should ask
+`sl_payment_gateways.api.list_gateway_currencies()` rather than hardcoding a
+list: it reports every implemented gateway's currencies, preferred first, and
+tracks this checkbox without anything being redeployed.
 
 ---
 
@@ -191,6 +220,8 @@ The switch moves everything together — endpoint, profile, access key and signi
 | `... is not configured for Live mode: set 'live_secret_key'` | Live credential empty | Fill it in — it will not use the sandbox one |
 | `Invalid return_url: ... requires an https:// URL` | Site served over http | Serve over HTTPS, or set the site's `host_name` to its https URL |
 | `Peoples Bank Settings holds an invalid 'sandbox_checkout_url'` | Override set to a non-https URL | Fix it, or clear the field to use CyberSource's endpoint |
+| `People's Bank cannot be charged in LKR. Accepted: USD` | **Allow LKR Charges** is off | Confirm with the bank that LKR is enabled on the profile, then tick it in Settings |
+| `decision=ERROR`, `reason_code=102`, `invalid_fields=currency` | LKR allowed here, but not enabled on the CyberSource profile | Untick **Allow LKR Charges** until the bank enables it |
 | CyberSource shows "Invalid request — field(s): signature" | Wrong secret key for the profile, or the two are from different environments | Check the profile/access/secret triple all came from the same profile |
 | CyberSource rejects the request naming a signed field | A name in `signed_field_names` with no matching field. This app builds both together, so it usually means a `bill_to_*` value was rejected on its own merits — most often a malformed `bill_to_email` or a country that is not a 2-letter ISO code | Pass a valid email and a code like `LK` |
 | `People's Bank response signature verification failed` | Payload tampered with, or the wrong mode is active for the profile that sent it | Check `use_sandbox` matches where the payment was made |

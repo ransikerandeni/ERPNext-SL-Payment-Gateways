@@ -24,6 +24,7 @@ def verify_response(form_dict) -> dict:
 [`sl_payment_gateways/api.py`](sl_payment_gateways/api.py) dispatches to whichever gateway is named, via three whitelisted methods:
 
 - `sl_payment_gateways.api.list_gateways` — names of gateways with a real implementation (for building a "Pay with X" UI).
+- `sl_payment_gateways.api.list_gateway_currencies` — `{gateway: [currency, ...]}`, most-preferred first, for building the currency control that goes with it. Read from each gateway's own Settings, so it tracks configuration rather than a hardcoded list (People's Bank takes LKR only once it is enabled there).
 - `sl_payment_gateways.api.create_payment` — `(gateway, order_id, amount, currency, **customer)` → checkout details. **Not a public endpoint**: it refuses to run when it is the method the HTTP request called, so it can only be reached *through* your own whitelisted method. See [Security model](#security-model).
 - `sl_payment_gateways.api.payment_return` — `(gateway)` → verifies and parses the gateway's response (reads the rest from `frappe.form_dict`). Guest-reachable, and safe to be: it verifies cryptographically and changes no state.
 
@@ -116,6 +117,8 @@ use_sandbox = 0  →  live_*     fields  →  the gateway's production portal
 | `WebXPay Settings` | `sandbox_public_key` (Long Text), `sandbox_secret_key` (Password) | `live_public_key`, `live_secret_key` | `use_sandbox` (Check) |
 | `PayHere Settings` | `sandbox_merchant_id` (Data), `sandbox_merchant_secret` (Password) | `live_merchant_id`, `live_merchant_secret` | `use_sandbox` (Check) |
 | `Peoples Bank Settings` | `sandbox_profile_id`, `sandbox_access_key` (Data), `sandbox_secret_key` (Password) | `live_profile_id`, `live_access_key`, `live_secret_key` | `use_sandbox` (Check) |
+
+`Peoples Bank Settings` also carries **`allow_lkr`** (Check, default off), which decides whether this gateway will sign a checkout in LKR at all — see [docs/peoples_bank.md](docs/peoples_bank.md#currencies). USD is always available.
 
 A missing credential fails loudly and names the exact field and mode — it never falls back to the other environment's:
 

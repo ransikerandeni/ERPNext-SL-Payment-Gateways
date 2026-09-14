@@ -6,6 +6,7 @@
  "engine": "InnoDB",
  "field_order": [
   "use_sandbox",
+  "allow_lkr",
   "sandbox_section",
   "sandbox_profile_id",
   "sandbox_access_key",
@@ -25,6 +26,13 @@
    "fieldname": "use_sandbox",
    "fieldtype": "Check",
    "label": "Use Sandbox"
+  },
+  {
+   "default": "0",
+   "description": "Untick = every People's Bank checkout is charged in USD, converting an LKR fee at the maintained USD-LKR rate. Tick it to also offer LKR, and to let the payer choose between the two.\n\nOff by default because People's Bank must enable LKR on the CyberSource profile first: until they do, an LKR checkout comes back decision=ERROR, reason_code=102, invalid_fields=currency - the payer reaches the hosted page and cannot pay. Ask the bank to confirm LKR is enabled, test one LKR payment in the sandbox, then tick this.",
+   "fieldname": "allow_lkr",
+   "fieldtype": "Check",
+   "label": "Allow LKR Charges"
   },
   {
    "fieldname": "sandbox_section",

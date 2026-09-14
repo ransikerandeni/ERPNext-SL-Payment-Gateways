@@ -397,6 +397,58 @@ class TestCheckoutUrlOverride:
 			peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})
 
 
+class TestCurrencyGate:
+	"""Which currencies a checkout may be signed in.
+
+	USD always; LKR only once somebody has ticked "Allow LKR Charges" - which
+	they should only do after People's Bank has enabled LKR on the CyberSource
+	profile. An LKR checkout against a profile without it comes back
+	decision=ERROR, reason_code=102, invalid_fields=currency: the payer reaches
+	the hosted page and cannot pay, which is worse than not being offered LKR.
+	"""
+
+	def test_usd_only_by_default(self, peoples_bank_usd_only_settings):
+		assert peoples_bank.supported_currencies() == ["USD"]
+
+	def test_lkr_appears_once_it_is_allowed(self, peoples_bank_settings):
+		assert peoples_bank.supported_currencies() == ["USD", "LKR"]
+
+	def test_an_unmigrated_settings_doc_reads_as_usd_only(self, peoples_bank_usd_only_settings):
+		# A site running this code before the doctype has been migrated has no
+		# `allow_lkr` field at all. That must read as "off", not raise.
+		peoples_bank_usd_only_settings.pop("allow_lkr", None)
+
+		assert peoples_bank.supported_currencies() == ["USD"]
+
+	def test_usd_is_signed_whether_or_not_lkr_is_allowed(self, peoples_bank_usd_only_settings):
+		fields = peoples_bank.build_checkout("SO-0001", "45.00", "USD", {})["fields"]
+
+		assert fields["currency"] == "USD"
+		assert fields["amount"] == "45.00"
+
+	def test_lkr_is_refused_while_the_gate_is_closed(self, peoples_bank_usd_only_settings):
+		with pytest.raises(frappe.ValidationError, match="cannot be charged in LKR"):
+			peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})
+
+	def test_lkr_is_signed_once_the_gate_is_open(self, peoples_bank_settings):
+		fields = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
+
+		assert fields["currency"] == "LKR"
+
+	@pytest.mark.parametrize("currency", ["EUR", "GBP", "INR"])
+	def test_a_currency_the_profile_never_takes_is_refused(self, peoples_bank_settings, currency):
+		# Not gated on a setting - simply not something this profile handles.
+		with pytest.raises(frappe.ValidationError, match="cannot be charged in %s" % (currency,)):
+			peoples_bank.build_checkout("SO-0001", "1500.00", currency, {})
+
+	def test_the_refusal_happens_before_anything_is_signed(self, peoples_bank_usd_only_settings):
+		# The point of refusing here rather than letting CyberSource decline it:
+		# nothing is signed, so there is no checkout to hand a payer that they
+		# can only fail on.
+		with pytest.raises(frappe.ValidationError):
+			peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})
+
+
 class TestVerifyResponse:
 	def test_accepts_a_genuine_approval(self, peoples_bank_settings, peoples_bank_response):
 		result = peoples_bank.verify_response(peoples_bank_response())

@@ -51,8 +51,9 @@ that must be signed to prevent tampering.
 
 Settings ("Peoples Bank Settings" single doctype) hold sandbox and live
 credential sets, selected by `use_sandbox` - the bank issues a test
-profile on the CyberSource test host and a separate live one. See
-docs/peoples_bank.md.
+profile on the CyberSource test host and a separate live one. They also
+hold `allow_lkr`, which decides whether this gateway will sign a checkout
+in LKR at all; see supported_currencies() below. See docs/peoples_bank.md.
 
 RESIDUAL RISKS you must handle in your own return handler
 ---------------------------------------------------------
@@ -99,6 +100,42 @@ MAX_ORDER_ID_LENGTH = 50
 # alternate sample posts to - can override these per mode in Settings.
 SANDBOX_CHECKOUT_URL = "https://testsecureacceptance.cybersource.com/pay"
 LIVE_CHECKOUT_URL = "https://secureacceptance.cybersource.com/pay"
+
+# WHAT THIS GATEWAY WILL CHARGE IN.
+#
+# USD always; LKR only once "Allow LKR Charges" is ticked in Settings.
+#
+# The gate is not caution for its own sake. People's Bank has to enable LKR on
+# the CyberSource profile itself, and until they do the whole checkout dies at
+# the hosted page with decision=ERROR, reason_code=102, invalid_fields=currency
+# - the payer gets there, sees a card form, and cannot pay. An option that
+# always fails is worse than no option, so LKR stays off until somebody has
+# confirmed with the bank and put one LKR payment through the sandbox.
+#
+# Order is the declared preference, used only where a caller has no better
+# basis for choosing. It has one: charging in the currency the fee is already
+# priced in avoids a conversion entirely, and create_gateway_payment picks that
+# way. USD leads here purely because it is the one that is always available.
+BASE_CURRENCY = "USD"
+GATED_CURRENCY = "LKR"
+
+# Static fallback for a caller that cannot reach Settings (see
+# api.gateway_currencies). Never wider than what supported_currencies() allows.
+CURRENCIES = (BASE_CURRENCY,)
+
+
+def supported_currencies():
+	"""The currencies a checkout may be built in right now, preferred first."""
+	settings = _settings()
+
+	# .get() rather than attribute access: a site running this code before the
+	# doctype has been migrated has no `allow_lkr` field at all, and that must
+	# read as off rather than raising mid-checkout.
+	if settings.get("allow_lkr"):
+		return [BASE_CURRENCY, GATED_CURRENCY]
+
+	return [BASE_CURRENCY]
+
 
 # A single-message sale: authorise and submit for settlement in one step.
 # ("authorization" would need a separate capture through the Simple Order
@@ -339,6 +376,20 @@ def build_checkout(order_id, amount, currency, customer):
 	currency = validate_currency(currency)
 
 	settings = _settings()
+
+	# Defence in depth. create_gateway_payment validates the payer's choice
+	# against this same list before it gets here, but build_checkout is what
+	# actually signs the amount-and-currency pair, so it does not take the
+	# caller's word for which currencies the profile accepts.
+	allowed = supported_currencies()
+
+	if currency not in allowed:
+		frappe.throw(
+			"People's Bank cannot be charged in %s. Accepted: %s. "
+			"(LKR is available once People's Bank has enabled it on the CyberSource "
+			"profile and \"Allow LKR Charges\" is ticked in Peoples Bank Settings.)"
+			% (frappe.utils.escape_html(currency), ", ".join(allowed))
+		)
 
 	# Both conditions, and the sandbox one is the load-bearing half: a
 	# ticked checkbox must never be able to send Mountain View to a live

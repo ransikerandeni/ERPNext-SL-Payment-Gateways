@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.5.0 — 2026-09-14
+
+### Added
+
+- **People's Bank can be charged in USD or LKR, and the payer chooses.**
+  `gateways/peoples_bank.supported_currencies()` reports what the profile
+  will take; `build_checkout()` refuses anything outside it before
+  signing. USD is always available. LKR is gated on a new
+  **Allow LKR Charges** checkbox in `Peoples Bank Settings`, **off by
+  default**: People's Bank must enable LKR on the CyberSource profile
+  first, and until they do an LKR checkout comes back
+  `decision=ERROR`, `reason_code=102`, `invalid_fields=currency` — the
+  payer reaches the hosted page and cannot pay. An option that always
+  fails is worse than no option.
+- **`api.list_gateway_currencies()`** (whitelisted) and
+  `api.gateway_currencies(gateway)` — one place to ask what a gateway
+  will charge in, so a front end renders its currency control from the
+  live setting instead of a list hardcoded in a client script. A gateway
+  module may answer dynamically (`supported_currencies()`) or statically
+  (a `CURRENCIES` tuple); unreadable Settings fall back to the static
+  answer and log, never to an exception, because a failed lookup must
+  not cost a participant their Pay button.
+
+### Unchanged
+
+- WebXPay and PayHere report `["LKR"]`, which is what they have always
+  collected. Nothing about their checkout, verification or client
+  handling changes, and neither shows a currency control.
+
 ## 0.4.0 — 2026-09-07
 
 ### Added
