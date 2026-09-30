@@ -397,6 +397,68 @@ class TestCheckoutUrlOverride:
 			peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})
 
 
+class TestReconciliationReference:
+	"""`auth_trans_ref_no` is capped at 25 characters by the processor.
+
+	The failure it causes is not a validation error you see at checkout - it is
+	a DECLINE after the payer has entered a card and cleared 3-D Secure:
+
+	    decision=DECLINE  reason_code=102
+	    message=Field length cannot be greater than 25.:DINVALIDDATA
+
+	The real order id that hit it, from the UCIC conference site, is 26.
+	"""
+
+	REAL_ORDER_ID = "CONF-SSN-PYMT-09-2026-0001"
+
+	def test_the_order_id_that_broke_it_is_one_over(self):
+		# Pins the premise: if this stops being true the tests below stop
+		# testing anything.
+		assert len(self.REAL_ORDER_ID) == peoples_bank.MAX_AUTH_TRANS_REF_NO_LENGTH + 1
+
+	def test_a_long_order_id_is_cut_to_the_limit(self, peoples_bank_settings):
+		fields = peoples_bank.build_checkout(self.REAL_ORDER_ID, "10.00", "USD", {})["fields"]
+
+		assert len(fields["auth_trans_ref_no"]) == peoples_bank.MAX_AUTH_TRANS_REF_NO_LENGTH
+
+	def test_a_short_order_id_is_left_alone(self, peoples_bank_settings):
+		# The bank's own samples use short ids (1666063403154, javaIN190503,
+		# 4555). Those must go through exactly as they are.
+		for order_id in ("1666063403154", "javaIN190503", "4555"):
+			fields = peoples_bank.build_checkout(order_id, "10.00", "USD", {})["fields"]
+
+			assert fields["auth_trans_ref_no"] == order_id
+
+	def test_reference_number_is_never_truncated(self, peoples_bank_settings):
+		# The field the return handler looks the booking up by. Cutting it
+		# would trade a declined payment for an unsettleable one.
+		fields = peoples_bank.build_checkout(self.REAL_ORDER_ID, "10.00", "USD", {})["fields"]
+
+		assert fields["reference_number"] == self.REAL_ORDER_ID
+
+	def test_the_tail_is_kept_so_bookings_stay_distinguishable(self):
+		# Truncating the head would give every booking in a month the same
+		# reconciliation reference, which is worse than the bug being fixed.
+		refs = {
+			peoples_bank._reconciliation_ref("CONF-SSN-PYMT-09-2026-%04d" % (n,))
+			for n in range(1, 40)
+		}
+
+		assert len(refs) == 39
+
+	def test_the_signature_covers_the_untruncated_reference_number(
+		self, peoples_bank_settings
+	):
+		# auth_trans_ref_no is unsigned, so truncating it must not disturb the
+		# signature - which is computed over reference_number, in full.
+		result = peoples_bank.build_checkout(self.REAL_ORDER_ID, "10.00", "USD", {})
+		fields = result["fields"]
+
+		assert "auth_trans_ref_no" in fields["unsigned_field_names"]
+		assert "auth_trans_ref_no" not in fields["signed_field_names"]
+		assert self.REAL_ORDER_ID in fields["reference_number"]
+
+
 class TestCurrencyGate:
 	"""Which currencies a checkout may be signed in.
 
@@ -457,6 +519,12 @@ class TestVerifyResponse:
 		assert result["status"] == "Paid"
 		assert result["amount"] == "1500.00"
 		assert result["currency"] == "LKR"
+
+	def test_returns_the_cybersource_request_id(self, peoples_bank_settings, peoples_bank_response):
+		# transaction_id is the "Request ID" in the CyberSource Business Center.
+		result = peoples_bank.verify_response(peoples_bank_response())
+
+		assert result["transaction_id"] == "6660635047636132804251"
 
 	def test_reports_the_authorised_amount_in_preference_to_the_requested_one(
 		self, peoples_bank_settings, peoples_bank_response

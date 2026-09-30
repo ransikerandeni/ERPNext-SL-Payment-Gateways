@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Every gateway's `verify_response()` now returns a top-level `transaction_id`
+  (People's Bank: CyberSource's `transaction_id`, the "Request ID" shown in the
+  Business Center; PayHere: `payment_id`; WebXPay: `order_reference_number`;
+  `None` when absent). Callers no longer have to dig through `raw`.
+
 ## 0.5.0 — 2026-09-14
 
 ### Added
@@ -22,6 +29,26 @@
   (a `CURRENCIES` tuple); unreadable Settings fall back to the static
   answer and log, never to an exception, because a failed lookup must
   not cost a participant their Pay button.
+
+### Fixed
+
+- **`auth_trans_ref_no` is truncated to 25 characters.** It is the
+  reconciliation reference CyberSource passes to the processor, and the
+  processor caps it there. The guide documents the name only as a *reply*
+  field (AlphaNumeric (60)); it is in the request because the bank's own
+  samples put it there, and every id in their pack is 13 characters or
+  fewer, so nothing ever exercised a long one. A 26-character ERPNext
+  name (`CONF-SSN-PYMT-09-2026-0001`) passes Secure Acceptance's own
+  validation, clears 3-D Secure, and is then rejected at authorisation
+  with `decision=DECLINE`, `reason_code=102`,
+  `Field length cannot be greater than 25.:DINVALIDDATA` and no
+  `invalid_fields` — the worst place to fail, after the payer has entered
+  a card and passed a bank challenge. The **tail** is kept, not the head:
+  uniqueness in an ERPNext name lives in the counter, and truncating the
+  head would give every booking in a month the same reference.
+  `reference_number` is left at full length — it is what
+  `verify_response()` returns as `order_id`, and the caller looks its
+  booking up by it.
 
 ### Unchanged
 

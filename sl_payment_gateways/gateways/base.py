@@ -54,6 +54,9 @@ def verify_response(form_dict) -> dict:
 			"status": "Paid" | "Failed" | "Pending",
 			"amount": "1500.00" | None,   # None if the gateway omits it
 			"currency": "LKR" | None,
+			"transaction_id": "..." | None,   # the gateway's own id for the payment
+			                                  # (CyberSource Request ID), for
+			                                  # refunds and disputes
 			"merchant_verified": True | False,
 			"raw": {...},         # parsed gateway response, for logging
 		}

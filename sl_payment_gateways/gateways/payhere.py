@@ -198,6 +198,8 @@ def verify_response(form_dict):
 		# recorded" - the caller still has to check them against the order.
 		"amount": payhere_amount,
 		"currency": payhere_currency,
+		# PayHere's own payment id - what their dashboard and refunds key on.
+		"transaction_id": str(form_dict.get("payment_id") or "").strip() or None,
 		# True: md5sig is keyed on our own merchant secret and covers the
 		# merchant id, which was checked above - so this notification is
 		# provably for our account, in the currently active mode.

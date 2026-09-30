@@ -346,6 +346,8 @@ def verify_response(form_dict):
 		# Never sent, in either response length - the currency has to come
 		# from the caller's own record of the order.
 		"currency": None,
+		# WebXPay's own reference for the payment, inside the signed blob.
+		"transaction_id": (parsed.get("order_reference_number") or "").strip() or None,
 		# False: WebXPay signs with its own key, not a per-merchant one, and
 		# the response carries no merchant id - so a valid signature does not
 		# prove *our* account was credited. Callers must not settle an order

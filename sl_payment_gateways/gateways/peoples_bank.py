@@ -93,6 +93,44 @@ from sl_payment_gateways.utils import (
 # CyberSource documents reference_number as String(50).
 MAX_ORDER_ID_LENGTH = 50
 
+# auth_trans_ref_no is capped at 25 characters - shorter than the order id
+# this app is given, hence the truncation in _reconciliation_ref().
+#
+# It is not in the guide's request tables at all: CyberSource documents it only
+# as a REPLY field (AlphaNumeric (60), p.165). It is in the request because the
+# bank's own samples put it there, and what they send it is the order id - a
+# millisecond timestamp (`1666063403154`), `javaIN190503`, `4555`. Thirteen
+# characters at the longest, so nothing in the pack ever exercised a long one.
+#
+# What it actually is, is the reconciliation reference CyberSource hands to the
+# processor, and the processor is where the limit lives. A 26-character value
+# passes Secure Acceptance's own validation, clears 3-D Secure, and is then
+# rejected at authorisation:
+#
+#   decision=DECLINE  reason_code=102
+#   message=Field length cannot be greater than 25.:DINVALIDDATA
+#
+# with no `invalid_fields` naming it, because the rejection did not come from
+# the field validator. That is the worst possible place to fail - the payer has
+# already entered a card and completed a bank challenge.
+MAX_AUTH_TRANS_REF_NO_LENGTH = 25
+
+
+def _reconciliation_ref(order_id):
+	"""`order_id` cut to what auth_trans_ref_no will take.
+
+	The TAIL is kept, not the head. This field exists to match a line in the
+	bank's report back to an order, so uniqueness is the whole job - and in an
+	ERPNext name it is the tail that is unique. "CONF-SSN-PYMT-09-2026-0001"
+	cut to its first 25 characters is the same string for the 1st and the 11th
+	booking of the month; cut to its last 25 it is not.
+
+	reference_number keeps the full, untruncated id - that is the field
+	verify_response() returns as `order_id`, and the caller looks its booking
+	up by it.
+	"""
+	return str(order_id)[-MAX_AUTH_TRANS_REF_NO_LENGTH:]
+
 # The Secure Acceptance Hosted Checkout endpoints (guide, "Endpoints and
 # Transaction Types"). The bank's test profile lives on the first, the
 # live one on the second. A merchant issued a bank-hosted front end
@@ -446,7 +484,8 @@ def build_checkout(order_id, amount, currency, customer):
 		"amount": amount,
 		"currency": currency,
 		# Reconciliation reference the bank shows against the transaction.
-		"auth_trans_ref_no": order_id,
+		# Truncated - see _reconciliation_ref().
+		"auth_trans_ref_no": _reconciliation_ref(order_id),
 	}
 
 	for name, value in billing.items():
@@ -551,6 +590,10 @@ def verify_response(form_dict):
 		"status": STATUS_BY_DECISION.get(decision, "Failed"),
 		"amount": str(amount) if amount not in (None, "") else None,
 		"currency": currency or None,
+		# CyberSource's transaction_id is the "Request ID" shown in the Business
+		# Center (Transaction Management) and is what a refund, capture or
+		# dispute is looked up by. Signed, so read from `signed` like the rest.
+		"transaction_id": str(signed.get("transaction_id") or "").strip() or None,
 		# True: the HMAC key is issued to our merchant profile alone, and
 		# req_profile_id was checked against it above - so a response that
 		# verifies is provably for our account, in the active mode.

@@ -110,6 +110,7 @@ class TestVerifyResponse:
 			"status": "Paid",
 			"amount": "1500.00",
 			"currency": "LKR",
+			"transaction_id": payhere_notification().get("payment_id") or None,
 			"merchant_verified": True,
 			"raw": dict(payhere_notification()),
 		}

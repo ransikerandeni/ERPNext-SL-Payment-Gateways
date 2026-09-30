@@ -43,7 +43,15 @@ class TestGatewayDispatch:
 		# Every implemented gateway must return the same key set, so a
 		# caller can read result["amount"] / result["merchant_verified"]
 		# without knowing which gateway answered.
-		expected_keys = {"order_id", "status", "amount", "currency", "merchant_verified", "raw"}
+		expected_keys = {
+			"order_id",
+			"status",
+			"amount",
+			"currency",
+			"transaction_id",
+			"merchant_verified",
+			"raw",
+		}
 
 		frappe.local.form_dict = payhere_notification()
 		assert set(api.payment_return("PayHere")) == expected_keys
