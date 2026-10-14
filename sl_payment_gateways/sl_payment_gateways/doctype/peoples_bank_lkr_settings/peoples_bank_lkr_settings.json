@@ -1,12 +1,12 @@
 {
  "actions": [],
- "creation": "2026-09-07 00:00:00.000000",
+ "creation": "2026-10-14 00:00:00.000000",
  "doctype": "DocType",
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
+  "enabled",
   "use_sandbox",
-  "allow_lkr",
   "sandbox_section",
   "sandbox_profile_id",
   "sandbox_access_key",
@@ -21,18 +21,18 @@
  ],
  "fields": [
   {
+   "default": "0",
+   "description": "Ticked = People's Bank (LKR) is offered to payers whose fee is priced in LKR, and will sign checkouts. Leave it off until the LKR credentials below are filled in and one sandbox payment has gone through - while it is off, an LKR fee is offered People's Bank (USD) instead, converted at the maintained rate.",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled"
+  },
+  {
    "default": "1",
-   "description": "Ticked = checkout goes through the CyberSource test host (testsecureacceptance.cybersource.com), using the test profile People's Bank issued you. Untick only once the Live section below is fully configured and tested.",
+   "description": "Ticked = checkout goes through the CyberSource test host (testsecureacceptance.cybersource.com), using the LKR test profile People's Bank issued you. Untick only once the Live section below is fully configured and tested.",
    "fieldname": "use_sandbox",
    "fieldtype": "Check",
    "label": "Use Sandbox"
-  },
-  {
-   "default": "0",
-   "description": "Untick = every People's Bank checkout is charged in USD, converting an LKR fee at the maintained USD-LKR rate. Tick it to also offer LKR, and to let the payer choose between the two.\n\nOff by default because People's Bank must enable LKR on the CyberSource profile first: until they do, an LKR checkout comes back decision=ERROR, reason_code=102, invalid_fields=currency - the payer reaches the hosted page and cannot pay. Ask the bank to confirm LKR is enabled, test one LKR payment in the sandbox, then tick this.",
-   "fieldname": "allow_lkr",
-   "fieldtype": "Check",
-   "label": "Allow LKR Charges"
   },
   {
    "fieldname": "sandbox_section",
@@ -40,7 +40,7 @@
    "label": "Sandbox Credentials"
   },
   {
-   "description": "Test Profile ID from People's Bank - a UUID, e.g. 3DEEB7C4-3568-4CDF-8247-1A15527CD3B2.",
+   "description": "Test Profile ID of the LKR profile from People's Bank - a UUID, e.g. 3DEEB7C4-3568-4CDF-8247-1A15527CD3B2.",
    "fieldname": "sandbox_profile_id",
    "fieldtype": "Data",
    "label": "Sandbox Profile ID"
@@ -77,7 +77,7 @@
    "label": "Live Credentials"
   },
   {
-   "description": "Production Profile ID from People's Bank. A separate profile from the test one - never the same value.",
+   "description": "Production Profile ID of the LKR profile from People's Bank. A separate profile from the test one - never the same value.",
    "fieldname": "live_profile_id",
    "fieldtype": "Data",
    "label": "Live Profile ID"
@@ -103,10 +103,10 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-09-07 00:00:00.000000",
+ "modified": "2026-10-14 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "SL Payment Gateways",
- "name": "Peoples Bank Settings",
+ "name": "Peoples Bank LKR Settings",
  "owner": "Administrator",
  "permissions": [
   {
@@ -124,5 +124,6 @@
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],
- "track_changes": 1
+ "track_changes": 1,
+ "description": "Credentials for the People's Bank (LKR) gateway - the CyberSource profile People's Bank issued for charging in LKR."
 }

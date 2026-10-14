@@ -16,8 +16,9 @@ import hmac
 import pytest
 
 import frappe
-from sl_payment_gateways.gateways import peoples_bank
+from sl_payment_gateways.gateways import peoples_bank, peoples_bank_lkr, peoples_bank_usd
 
+from . import frappe_stub
 from .conftest import (
 	PEOPLES_LIVE_PROFILE_ID,
 	PEOPLES_SANDBOX_ACCESS_KEY,
@@ -25,7 +26,13 @@ from .conftest import (
 	PEOPLES_SANDBOX_SECRET,
 )
 
-RECEIPT = "/api/method/my_app.api.payment_return?gateway=Peoples%20Bank"
+RECEIPT = "/api/method/my_app.api.payment_return?gateway=Peoples%20Bank%20(LKR)"
+
+# The LKR profile's test credentials - different from the USD ones in
+# conftest, so a test that crosses the two can tell them apart.
+LKR_PROFILE_ID = "5E6F7A8B-0000-4EEE-8FFF-13579BDF2468"
+LKR_ACCESS_KEY = "99999999aaaa8888bbbb7777cccc6666"
+LKR_SECRET = "2" * 40 + "lkrsandbox" + "d" * 14
 
 
 def reference_signature(fields, names, secret=PEOPLES_SANDBOX_SECRET):
@@ -44,13 +51,13 @@ def reference_signature(fields, names, secret=PEOPLES_SANDBOX_SECRET):
 
 class TestBuildCheckout:
 	def test_posts_to_the_cybersource_test_host_in_sandbox(self, peoples_bank_settings):
-		result = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})
+		result = peoples_bank_lkr.build_checkout("SO-0001", "1500.00", "LKR", {})
 
 		assert result["method"] == "POST"
 		assert result["checkout_url"] == peoples_bank.SANDBOX_CHECKOUT_URL
 
 	def test_carries_every_field_secure_acceptance_requires(self, peoples_bank_settings):
-		fields = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
+		fields = peoples_bank_lkr.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
 
 		# The guide's "Required Signed Fields" list, in full.
 		for required in (
@@ -75,7 +82,7 @@ class TestBuildCheckout:
 		assert fields["access_key"] == PEOPLES_SANDBOX_ACCESS_KEY
 
 	def test_signature_matches_an_independent_implementation(self, peoples_bank_settings):
-		fields = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
+		fields = peoples_bank_lkr.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
 
 		names = fields["signed_field_names"].split(",")
 
@@ -84,7 +91,7 @@ class TestBuildCheckout:
 	def test_every_name_in_signed_field_names_is_actually_present(self, peoples_bank_settings):
 		# A signed name with no field signs an empty value here and a
 		# different one at CyberSource, which rejects the whole request.
-		fields = peoples_bank.build_checkout(
+		fields = peoples_bank_lkr.build_checkout(
 			"SO-0001", "1500.00", "LKR", {"return_url": "/paid", "notify_url": RECEIPT}
 		)["fields"]
 
@@ -92,7 +99,7 @@ class TestBuildCheckout:
 			assert name in fields, name
 
 	def test_unsigned_field_names_covers_the_billing_details(self, peoples_bank_settings):
-		fields = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
+		fields = peoples_bank_lkr.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
 
 		unsigned = fields["unsigned_field_names"].split(",")
 
@@ -102,7 +109,7 @@ class TestBuildCheckout:
 			assert money not in unsigned
 
 	def test_signed_and_unsigned_lists_do_not_overlap(self, peoples_bank_settings):
-		fields = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
+		fields = peoples_bank_lkr.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
 
 		signed = set(fields["signed_field_names"].split(","))
 		unsigned = set(fields["unsigned_field_names"].split(","))
@@ -112,20 +119,20 @@ class TestBuildCheckout:
 	def test_signed_date_time_is_utc_in_the_documented_format(self, peoples_bank_settings):
 		import re
 
-		fields = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
+		fields = peoples_bank_lkr.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
 
 		assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", fields["signed_date_time"])
 
 	def test_transaction_uuid_is_unique_per_attempt(self, peoples_bank_settings):
 		# CyberSource uses it to detect duplicate submissions, so a reused
 		# value turns a genuine retry into a rejected transaction.
-		first = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
-		second = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
+		first = peoples_bank_lkr.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
+		second = peoples_bank_lkr.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
 
 		assert first["transaction_uuid"] != second["transaction_uuid"]
 
 	def test_amount_is_normalised_before_signing(self, peoples_bank_settings):
-		fields = peoples_bank.build_checkout("SO-0001", "1500", "lkr", {})["fields"]
+		fields = peoples_bank_lkr.build_checkout("SO-0001", "1500", "lkr", {})["fields"]
 
 		assert fields["amount"] == "1500.00"
 		assert fields["currency"] == "LKR"
@@ -134,10 +141,10 @@ class TestBuildCheckout:
 		# reference_number is String(50); a truncated one would settle
 		# against an order that does not exist.
 		with pytest.raises(frappe.ValidationError, match="too long"):
-			peoples_bank.build_checkout("S" * 51, "1500.00", "LKR", {})
+			peoples_bank_lkr.build_checkout("S" * 51, "1500.00", "LKR", {})
 
 	def test_customer_details_are_passed_through(self, peoples_bank_settings):
-		fields = peoples_bank.build_checkout(
+		fields = peoples_bank_lkr.build_checkout(
 			"SO-0001",
 			"1500.00",
 			"LKR",
@@ -165,7 +172,7 @@ class TestBuildCheckout:
 		# "Sr" would have CyberSource reject the whole request.
 		# state/postal supplied throughout: a non-LK country without them
 		# is refused outright, which is TestOptionalBillingFields' subject.
-		fields = peoples_bank.build_checkout(
+		fields = peoples_bank_lkr.build_checkout(
 			"SO-0001",
 			"1500.00",
 			"LKR",
@@ -175,7 +182,7 @@ class TestBuildCheckout:
 		assert fields["bill_to_address_country"] == expected
 
 	def test_missing_customer_details_get_the_sample_packs_placeholders(self, peoples_bank_settings):
-		fields = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
+		fields = peoples_bank_lkr.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
 
 		assert fields["bill_to_forename"] == "Customer"
 		assert fields["bill_to_email"] == "null@cybersource.com"
@@ -192,7 +199,7 @@ class TestOptionalBillingFields:
 	"""
 
 	def test_dropped_entirely_when_the_caller_has_no_value(self, peoples_bank_settings):
-		fields = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
+		fields = peoples_bank_lkr.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
 
 		unsigned = fields["unsigned_field_names"].split(",")
 
@@ -201,7 +208,7 @@ class TestOptionalBillingFields:
 			assert name not in unsigned
 
 	def test_whitespace_only_values_count_as_absent(self, peoples_bank_settings):
-		fields = peoples_bank.build_checkout(
+		fields = peoples_bank_lkr.build_checkout(
 			"SO-0001", "1500.00", "LKR", {"state": "   ", "postal_code": "\t"}
 		)["fields"]
 
@@ -209,7 +216,7 @@ class TestOptionalBillingFields:
 		assert "bill_to_address_postal_code" not in fields
 
 	def test_sent_and_named_when_present(self, peoples_bank_settings):
-		fields = peoples_bank.build_checkout(
+		fields = peoples_bank_lkr.build_checkout(
 			"SO-0001", "1500.00", "LKR", {"state": "Western", "postal_code": "00700"}
 		)["fields"]
 
@@ -232,10 +239,10 @@ class TestOptionalBillingFields:
 		# The bank's own rule. Failing here beats building a hosted page
 		# the payer can only be declined on.
 		with pytest.raises(frappe.ValidationError):
-			peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", customer)
+			peoples_bank_lkr.build_checkout("SO-0001", "1500.00", "LKR", customer)
 
 	def test_lk_billing_country_does_not_require_them(self, peoples_bank_settings):
-		fields = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {"country": "LK"})["fields"]
+		fields = peoples_bank_lkr.build_checkout("SO-0001", "1500.00", "LKR", {"country": "LK"})["fields"]
 
 		assert fields["bill_to_address_country"] == "LK"
 
@@ -253,7 +260,7 @@ class TestCyberSourceTestBillingData:
 	def test_replaces_the_whole_billing_set_in_sandbox(self, peoples_bank_settings):
 		peoples_bank_settings["use_test_billing_data"] = 1
 
-		fields = peoples_bank.build_checkout(
+		fields = peoples_bank_lkr.build_checkout(
 			"SO-0001",
 			"1500.00",
 			"LKR",
@@ -282,7 +289,7 @@ class TestCyberSourceTestBillingData:
 		# CyberSource, which would put us back to an address missing a state.
 		peoples_bank_settings["use_test_billing_data"] = 1
 
-		fields = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
+		fields = peoples_bank_lkr.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
 		unsigned = fields["unsigned_field_names"].split(",")
 
 		assert "bill_to_address_state" in unsigned
@@ -294,7 +301,7 @@ class TestCyberSourceTestBillingData:
 		peoples_bank_settings["use_test_billing_data"] = 1
 		peoples_bank_settings["use_sandbox"] = 0
 
-		fields = peoples_bank.build_checkout(
+		fields = peoples_bank_lkr.build_checkout(
 			"SO-0001", "1500.00", "LKR", {"first_name": "Ransike", "country": "LK"}
 		)["fields"]
 
@@ -305,7 +312,7 @@ class TestCyberSourceTestBillingData:
 	def test_off_by_default(self, peoples_bank_settings):
 		# Including on a site whose doctype has not been migrated yet - the
 		# field is simply absent there, and absent must read as off.
-		fields = peoples_bank.build_checkout(
+		fields = peoples_bank_lkr.build_checkout(
 			"SO-0001", "1500.00", "LKR", {"first_name": "Ransike", "country": "LK"}
 		)["fields"]
 
@@ -316,24 +323,24 @@ class TestCyberSourceTestBillingData:
 		# Billing is unsigned either way, so switching the flag must not move
 		# anything into or out of the signed set.
 		peoples_bank_settings["use_test_billing_data"] = 1
-		with_test = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
+		with_test = peoples_bank_lkr.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
 
 		peoples_bank_settings["use_test_billing_data"] = 0
-		without = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
+		without = peoples_bank_lkr.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
 
 		assert with_test["signed_field_names"] == without["signed_field_names"]
 
 
 class TestOverrideUrls:
 	def test_absent_when_the_caller_supplies_none(self, peoples_bank_settings):
-		fields = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
+		fields = peoples_bank_lkr.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
 
 		for field in peoples_bank.OVERRIDE_FIELDS:
 			assert field not in fields
 			assert field not in fields["signed_field_names"]
 
 	def test_present_and_signed_when_supplied(self, peoples_bank_settings):
-		fields = peoples_bank.build_checkout(
+		fields = peoples_bank_lkr.build_checkout(
 			"SO-0001",
 			"1500.00",
 			"LKR",
@@ -350,7 +357,7 @@ class TestOverrideUrls:
 		assert fields["signature"] == reference_signature(fields, names)
 
 	def test_are_resolved_against_this_site(self, peoples_bank_settings):
-		fields = peoples_bank.build_checkout(
+		fields = peoples_bank_lkr.build_checkout(
 			"SO-0001", "1500.00", "LKR", {"return_url": "/paid"}
 		)["fields"]
 
@@ -361,7 +368,7 @@ class TestOverrideUrls:
 		# back-office POST silently diverts payment confirmations.
 		for key in ("return_url", "cancel_url", "notify_url"):
 			with pytest.raises(frappe.ValidationError, match="must point at this site"):
-				peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {key: "https://evil.example/x"})
+				peoples_bank_lkr.build_checkout("SO-0001", "1500.00", "LKR", {key: "https://evil.example/x"})
 
 	def test_http_urls_are_refused(self, peoples_bank_settings, monkeypatch):
 		# CyberSource requires https for these; an http one fails later, as
@@ -369,7 +376,7 @@ class TestOverrideUrls:
 		monkeypatch.setattr(frappe.utils, "get_url", lambda path="": "http://erp.example.com" + str(path))
 
 		with pytest.raises(frappe.ValidationError, match="requires an https"):
-			peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {"return_url": "/paid"})
+			peoples_bank_lkr.build_checkout("SO-0001", "1500.00", "LKR", {"return_url": "/paid"})
 
 
 class TestCheckoutUrlOverride:
@@ -385,7 +392,7 @@ class TestCheckoutUrlOverride:
 		bank_page = "https://egateway.peoplesbank.lk/ipg_qr_middle_page_uat/index.php"
 		peoples_bank_settings["sandbox_checkout_url"] = bank_page
 
-		result = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})
+		result = peoples_bank_lkr.build_checkout("SO-0001", "1500.00", "LKR", {})
 
 		assert result["checkout_url"] == bank_page
 
@@ -394,7 +401,7 @@ class TestCheckoutUrlOverride:
 		peoples_bank_settings["sandbox_checkout_url"] = url
 
 		with pytest.raises(frappe.ValidationError, match="invalid `sandbox_checkout_url`"):
-			peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})
+			peoples_bank_lkr.build_checkout("SO-0001", "1500.00", "LKR", {})
 
 
 class TestReconciliationReference:
@@ -417,7 +424,7 @@ class TestReconciliationReference:
 		assert len(self.REAL_ORDER_ID) == peoples_bank.MAX_AUTH_TRANS_REF_NO_LENGTH + 1
 
 	def test_a_long_order_id_is_cut_to_the_limit(self, peoples_bank_settings):
-		fields = peoples_bank.build_checkout(self.REAL_ORDER_ID, "10.00", "USD", {})["fields"]
+		fields = peoples_bank_usd.build_checkout(self.REAL_ORDER_ID, "10.00", "USD", {})["fields"]
 
 		assert len(fields["auth_trans_ref_no"]) == peoples_bank.MAX_AUTH_TRANS_REF_NO_LENGTH
 
@@ -425,14 +432,14 @@ class TestReconciliationReference:
 		# The bank's own samples use short ids (1666063403154, javaIN190503,
 		# 4555). Those must go through exactly as they are.
 		for order_id in ("1666063403154", "javaIN190503", "4555"):
-			fields = peoples_bank.build_checkout(order_id, "10.00", "USD", {})["fields"]
+			fields = peoples_bank_usd.build_checkout(order_id, "10.00", "USD", {})["fields"]
 
 			assert fields["auth_trans_ref_no"] == order_id
 
 	def test_reference_number_is_never_truncated(self, peoples_bank_settings):
 		# The field the return handler looks the booking up by. Cutting it
 		# would trade a declined payment for an unsettleable one.
-		fields = peoples_bank.build_checkout(self.REAL_ORDER_ID, "10.00", "USD", {})["fields"]
+		fields = peoples_bank_usd.build_checkout(self.REAL_ORDER_ID, "10.00", "USD", {})["fields"]
 
 		assert fields["reference_number"] == self.REAL_ORDER_ID
 
@@ -451,7 +458,7 @@ class TestReconciliationReference:
 	):
 		# auth_trans_ref_no is unsigned, so truncating it must not disturb the
 		# signature - which is computed over reference_number, in full.
-		result = peoples_bank.build_checkout(self.REAL_ORDER_ID, "10.00", "USD", {})
+		result = peoples_bank_usd.build_checkout(self.REAL_ORDER_ID, "10.00", "USD", {})
 		fields = result["fields"]
 
 		assert "auth_trans_ref_no" in fields["unsigned_field_names"]
@@ -459,61 +466,144 @@ class TestReconciliationReference:
 		assert self.REAL_ORDER_ID in fields["reference_number"]
 
 
-class TestCurrencyGate:
-	"""Which currencies a checkout may be signed in.
+class TestOneCurrencyPerProfile:
+	"""Each People's Bank gateway charges in its own profile's currency, only.
 
-	USD always; LKR only once somebody has ticked "Allow LKR Charges" - which
-	they should only do after People's Bank has enabled LKR on the CyberSource
-	profile. An LKR checkout against a profile without it comes back
-	decision=ERROR, reason_code=102, invalid_fields=currency: the payer reaches
-	the hosted page and cannot pay, which is worse than not being offered LKR.
+	The bank issued one CyberSource profile per currency. Signing USD against
+	the LKR profile (or the reverse) comes back decision=ERROR, reason_code=102,
+	invalid_fields=currency: the payer reaches the hosted page and cannot pay.
+	So the wrong currency is refused here, before anything is signed.
 	"""
 
-	def test_usd_only_by_default(self, peoples_bank_usd_only_settings):
-		assert peoples_bank.supported_currencies() == ["USD"]
+	def test_each_gateway_reports_its_own_currency(self):
+		assert peoples_bank_usd.CURRENCIES == ("USD",)
+		assert peoples_bank_lkr.CURRENCIES == ("LKR",)
 
-	def test_lkr_appears_once_it_is_allowed(self, peoples_bank_settings):
-		assert peoples_bank.supported_currencies() == ["USD", "LKR"]
-
-	def test_an_unmigrated_settings_doc_reads_as_usd_only(self, peoples_bank_usd_only_settings):
-		# A site running this code before the doctype has been migrated has no
-		# `allow_lkr` field at all. That must read as "off", not raise.
-		peoples_bank_usd_only_settings.pop("allow_lkr", None)
-
-		assert peoples_bank.supported_currencies() == ["USD"]
-
-	def test_usd_is_signed_whether_or_not_lkr_is_allowed(self, peoples_bank_usd_only_settings):
-		fields = peoples_bank.build_checkout("SO-0001", "45.00", "USD", {})["fields"]
+	def test_usd_gateway_signs_usd(self, peoples_bank_settings):
+		fields = peoples_bank_usd.build_checkout("SO-0001", "45.00", "USD", {})["fields"]
 
 		assert fields["currency"] == "USD"
 		assert fields["amount"] == "45.00"
 
-	def test_lkr_is_refused_while_the_gate_is_closed(self, peoples_bank_usd_only_settings):
-		with pytest.raises(frappe.ValidationError, match="cannot be charged in LKR"):
-			peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})
-
-	def test_lkr_is_signed_once_the_gate_is_open(self, peoples_bank_settings):
-		fields = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
+	def test_lkr_gateway_signs_lkr(self, peoples_bank_settings):
+		fields = peoples_bank_lkr.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
 
 		assert fields["currency"] == "LKR"
 
-	@pytest.mark.parametrize("currency", ["EUR", "GBP", "INR"])
-	def test_a_currency_the_profile_never_takes_is_refused(self, peoples_bank_settings, currency):
-		# Not gated on a setting - simply not something this profile handles.
-		with pytest.raises(frappe.ValidationError, match="cannot be charged in %s" % (currency,)):
-			peoples_bank.build_checkout("SO-0001", "1500.00", currency, {})
+	def test_usd_gateway_refuses_lkr(self, peoples_bank_settings):
+		with pytest.raises(frappe.ValidationError, match="cannot be charged in LKR"):
+			peoples_bank_usd.build_checkout("SO-0001", "1500.00", "LKR", {})
 
-	def test_the_refusal_happens_before_anything_is_signed(self, peoples_bank_usd_only_settings):
-		# The point of refusing here rather than letting CyberSource decline it:
-		# nothing is signed, so there is no checkout to hand a payer that they
-		# can only fail on.
-		with pytest.raises(frappe.ValidationError):
-			peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})
+	def test_lkr_gateway_refuses_usd(self, peoples_bank_settings):
+		with pytest.raises(frappe.ValidationError, match="cannot be charged in USD"):
+			peoples_bank_lkr.build_checkout("SO-0001", "45.00", "USD", {})
+
+	@pytest.mark.parametrize("currency", ["EUR", "GBP", "INR"])
+	def test_a_currency_neither_profile_takes_is_refused(self, peoples_bank_settings, currency):
+		for module in (peoples_bank_usd, peoples_bank_lkr):
+			with pytest.raises(frappe.ValidationError, match="cannot be charged in %s" % (currency,)):
+				module.build_checkout("SO-0001", "1500.00", currency, {})
+
+
+class TestTwoProfiles:
+	"""The two gateways read separate Settings, so they are separate profiles."""
+
+	@pytest.fixture
+	def two_profiles(self):
+		usd = frappe_stub.FakeSettingsDoc(
+			{
+				"enabled": 1,
+				"use_sandbox": 1,
+				"sandbox_profile_id": PEOPLES_SANDBOX_PROFILE_ID,
+				"sandbox_access_key": PEOPLES_SANDBOX_ACCESS_KEY,
+			},
+			passwords={"sandbox_secret_key": PEOPLES_SANDBOX_SECRET},
+		)
+		lkr = frappe_stub.FakeSettingsDoc(
+			{
+				"enabled": 1,
+				"use_sandbox": 1,
+				"sandbox_profile_id": LKR_PROFILE_ID,
+				"sandbox_access_key": LKR_ACCESS_KEY,
+			},
+			passwords={"sandbox_secret_key": LKR_SECRET},
+		)
+		frappe.test_docs["Peoples Bank USD Settings"] = usd
+		frappe.test_docs["Peoples Bank LKR Settings"] = lkr
+		return usd, lkr
+
+	def test_each_gateway_signs_with_its_own_profile(self, two_profiles):
+		usd = peoples_bank_usd.build_checkout("SO-1", "45.00", "USD", {})["fields"]
+		lkr = peoples_bank_lkr.build_checkout("SO-1", "1500.00", "LKR", {})["fields"]
+
+		assert usd["profile_id"] == PEOPLES_SANDBOX_PROFILE_ID
+		assert lkr["profile_id"] == LKR_PROFILE_ID
+		assert lkr["access_key"] == LKR_ACCESS_KEY
+
+	def test_each_gateway_verifies_its_own_profiles_responses(self, two_profiles, peoples_bank_response):
+		lkr_payload = peoples_bank_response(profile_id=LKR_PROFILE_ID, secret=LKR_SECRET)
+		usd_payload = peoples_bank_response(currency="USD", amount="45.00")
+
+		assert peoples_bank_lkr.verify_response(lkr_payload)["status"] == "Paid"
+		assert peoples_bank_usd.verify_response(usd_payload)["status"] == "Paid"
+
+	def test_a_response_from_one_profile_does_not_verify_at_the_other(self, two_profiles, peoples_bank_response):
+		lkr_payload = peoples_bank_response(profile_id=LKR_PROFILE_ID, secret=LKR_SECRET)
+		usd_payload = peoples_bank_response(currency="USD", amount="45.00")
+
+		with pytest.raises(frappe.ValidationError, match="signature verification failed"):
+			peoples_bank_usd.verify_response(lkr_payload)
+		with pytest.raises(frappe.ValidationError, match="signature verification failed"):
+			peoples_bank_lkr.verify_response(usd_payload)
+
+	def test_settings_are_named_in_errors(self, two_profiles):
+		two_profiles[1]["sandbox_checkout_url"] = "http://not-https.example"
+
+		with pytest.raises(frappe.ValidationError, match="Peoples Bank LKR Settings holds an invalid"):
+			peoples_bank_lkr.build_checkout("SO-1", "1500.00", "LKR", {})
+
+	def test_missing_settings_name_the_doctype_to_migrate(self):
+		with pytest.raises(frappe.ValidationError, match="Peoples Bank LKR Settings doctype does not exist"):
+			peoples_bank_lkr.build_checkout("SO-1", "1500.00", "LKR", {})
+
+
+class TestEnabled:
+	"""Enabled decides whether a gateway is offered and will sign - not whether
+	a payment already made through it settles."""
+
+	def test_reports_the_checkbox(self, peoples_bank_settings):
+		assert peoples_bank_lkr.is_enabled() is True
+
+		peoples_bank_settings["enabled"] = 0
+
+		assert peoples_bank_lkr.is_enabled() is False
+
+	def test_an_unmigrated_settings_doc_reads_as_off(self, peoples_bank_settings):
+		# A site running this code before the doctype gained `enabled`.
+		peoples_bank_settings.pop("enabled", None)
+
+		assert peoples_bank_usd.is_enabled() is False
+
+	def test_a_switched_off_gateway_signs_nothing(self, peoples_bank_settings):
+		peoples_bank_settings["enabled"] = 0
+
+		with pytest.raises(frappe.ValidationError, match="is switched off"):
+			peoples_bank_lkr.build_checkout("SO-0001", "1500.00", "LKR", {})
+
+	def test_a_switched_off_gateway_still_settles_what_was_paid(
+		self, peoples_bank_settings, peoples_bank_response
+	):
+		# Switched off after the payer reached the hosted page: they have paid,
+		# and their response must still verify.
+		payload = peoples_bank_response()
+		peoples_bank_settings["enabled"] = 0
+
+		assert peoples_bank_lkr.verify_response(payload)["status"] == "Paid"
 
 
 class TestVerifyResponse:
 	def test_accepts_a_genuine_approval(self, peoples_bank_settings, peoples_bank_response):
-		result = peoples_bank.verify_response(peoples_bank_response())
+		result = peoples_bank_lkr.verify_response(peoples_bank_response())
 
 		assert result["order_id"] == "SO-0001"
 		assert result["status"] == "Paid"
@@ -522,7 +612,7 @@ class TestVerifyResponse:
 
 	def test_returns_the_cybersource_request_id(self, peoples_bank_settings, peoples_bank_response):
 		# transaction_id is the "Request ID" in the CyberSource Business Center.
-		result = peoples_bank.verify_response(peoples_bank_response())
+		result = peoples_bank_lkr.verify_response(peoples_bank_response())
 
 		assert result["transaction_id"] == "6660635047636132804251"
 
@@ -531,7 +621,7 @@ class TestVerifyResponse:
 	):
 		# auth_amount is what was actually authorised; req_amount is only
 		# what we asked for.
-		result = peoples_bank.verify_response(
+		result = peoples_bank_lkr.verify_response(
 			peoples_bank_response(amount="1500.00", auth_amount="1500.00")
 		)
 
@@ -554,37 +644,37 @@ class TestVerifyResponse:
 	):
 		# REVIEW in particular: the authorisation was declined and a
 		# capture might still be possible, so the money is not in hand.
-		result = peoples_bank.verify_response(peoples_bank_response(decision=decision))
+		result = peoples_bank_lkr.verify_response(peoples_bank_response(decision=decision))
 
 		assert result["status"] == status
 
 	def test_decision_case_and_padding_do_not_matter(self, peoples_bank_settings, peoples_bank_response):
-		assert peoples_bank.verify_response(peoples_bank_response(decision=" accept "))["status"] == "Paid"
+		assert peoples_bank_lkr.verify_response(peoples_bank_response(decision=" accept "))["status"] == "Paid"
 
 	def test_merchant_verified_is_true(self, peoples_bank_settings, peoples_bank_response):
 		# The HMAC key belongs to our profile alone, unlike WebXPay's
 		# shared signing key.
-		assert peoples_bank.verify_response(peoples_bank_response())["merchant_verified"] is True
+		assert peoples_bank_lkr.verify_response(peoples_bank_response())["merchant_verified"] is True
 
 	def test_a_tampered_amount_is_rejected(self, peoples_bank_settings, peoples_bank_response):
 		payload = peoples_bank_response(amount="1500.00")
 		payload["req_amount"] = "1.00"
 
 		with pytest.raises(frappe.ValidationError, match="signature verification failed"):
-			peoples_bank.verify_response(payload)
+			peoples_bank_lkr.verify_response(payload)
 
 	def test_a_tampered_decision_is_rejected(self, peoples_bank_settings, peoples_bank_response):
 		payload = peoples_bank_response(decision="DECLINE")
 		payload["decision"] = "ACCEPT"
 
 		with pytest.raises(frappe.ValidationError, match="signature verification failed"):
-			peoples_bank.verify_response(payload)
+			peoples_bank_lkr.verify_response(payload)
 
 	def test_a_response_signed_with_the_wrong_secret_is_rejected(
 		self, peoples_bank_settings, peoples_bank_response
 	):
 		with pytest.raises(frappe.ValidationError, match="signature verification failed"):
-			peoples_bank.verify_response(peoples_bank_response(secret="not-our-secret-key"))
+			peoples_bank_lkr.verify_response(peoples_bank_response(secret="not-our-secret-key"))
 
 	def test_a_response_for_another_merchant_profile_is_rejected(
 		self, peoples_bank_settings, peoples_bank_response
@@ -594,29 +684,29 @@ class TestVerifyResponse:
 		payload = peoples_bank_response(profile_id=PEOPLES_LIVE_PROFILE_ID)
 
 		with pytest.raises(frappe.ValidationError, match="different merchant profile"):
-			peoples_bank.verify_response(payload)
+			peoples_bank_lkr.verify_response(payload)
 
 	def test_missing_signature_is_a_clean_error(self, peoples_bank_settings, peoples_bank_response):
 		payload = peoples_bank_response()
 		del payload["signature"]
 
 		with pytest.raises(frappe.ValidationError, match="Missing signature"):
-			peoples_bank.verify_response(payload)
+			peoples_bank_lkr.verify_response(payload)
 
 	@pytest.mark.parametrize("value", [None, "", "   "])
 	def test_missing_signed_field_names_is_a_clean_error(self, peoples_bank_settings, value):
 		with pytest.raises(frappe.ValidationError, match="Missing signed_field_names"):
-			peoples_bank.verify_response(frappe._dict({"signature": "x", "signed_field_names": value}))
+			peoples_bank_lkr.verify_response(frappe._dict({"signature": "x", "signed_field_names": value}))
 
 	def test_an_empty_entry_in_signed_field_names_is_rejected(self, peoples_bank_settings):
 		with pytest.raises(frappe.ValidationError, match="empty entry"):
-			peoples_bank.verify_response(
+			peoples_bank_lkr.verify_response(
 				frappe._dict({"signature": "x", "signed_field_names": "decision,,req_amount"})
 			)
 
 	def test_an_absurd_signed_field_list_is_rejected(self, peoples_bank_settings):
 		with pytest.raises(frappe.ValidationError, match="too many fields"):
-			peoples_bank.verify_response(
+			peoples_bank_lkr.verify_response(
 				frappe._dict({"signature": "x", "signed_field_names": ",".join(["f"] * 1000)})
 			)
 
@@ -638,7 +728,7 @@ class TestOnlySignedFieldsAreTrusted:
 		payload["decision"] = "ACCEPT"
 
 		with pytest.raises(frappe.ValidationError, match="decision is not in the signed fields"):
-			peoples_bank.verify_response(payload)
+			peoples_bank_lkr.verify_response(payload)
 
 	def test_an_unsigned_reference_number_is_refused(self, peoples_bank_settings, peoples_bank_response):
 		# Otherwise a genuine response could be re-pointed at someone
@@ -649,12 +739,12 @@ class TestOnlySignedFieldsAreTrusted:
 		payload["req_reference_number"] = "SO-9999"
 
 		with pytest.raises(frappe.ValidationError, match="req_reference_number is not in the signed fields"):
-			peoples_bank.verify_response(payload)
+			peoples_bank_lkr.verify_response(payload)
 
 	def test_unsigned_extras_never_reach_the_result(self, peoples_bank_settings, peoples_bank_response):
 		payload = peoples_bank_response(auth_amount="1500.00", injected="whatever")
 
-		result = peoples_bank.verify_response(payload)
+		result = peoples_bank_lkr.verify_response(payload)
 
 		assert "injected" not in result["raw"]
 		assert set(result["raw"]) <= set(payload["signed_field_names"].split(","))
@@ -667,25 +757,25 @@ class TestOnlySignedFieldsAreTrusted:
 		payload = peoples_bank_response(amount="1500.00")
 		payload["auth_amount"] = "999999.00"
 
-		assert peoples_bank.verify_response(payload)["amount"] == "1500.00"
+		assert peoples_bank_lkr.verify_response(payload)["amount"] == "1500.00"
 
 
 class TestSettingsErrors:
 	def test_a_missing_settings_doctype_says_so(self):
 		with pytest.raises(frappe.ValidationError, match="does not exist"):
-			peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})
+			peoples_bank_lkr.build_checkout("SO-0001", "1500.00", "LKR", {})
 
 	def test_a_missing_credential_names_the_field_and_mode(self, peoples_bank_settings):
 		peoples_bank_settings["use_sandbox"] = 0
 		peoples_bank_settings["live_profile_id"] = ""
 
 		with pytest.raises(frappe.ValidationError, match="Live mode: set `live_profile_id`"):
-			peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})
+			peoples_bank_lkr.build_checkout("SO-0001", "1500.00", "LKR", {})
 
 	def test_the_unprefixed_legacy_fields_still_work(
 		self, peoples_bank_legacy_settings, peoples_bank_response
 	):
-		fields = peoples_bank.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
+		fields = peoples_bank_lkr.build_checkout("SO-0001", "1500.00", "LKR", {})["fields"]
 
 		assert fields["profile_id"] == PEOPLES_SANDBOX_PROFILE_ID
-		assert peoples_bank.verify_response(peoples_bank_response())["status"] == "Paid"
+		assert peoples_bank_lkr.verify_response(peoples_bank_response())["status"] == "Paid"

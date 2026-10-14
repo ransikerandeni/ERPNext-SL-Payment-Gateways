@@ -12,9 +12,10 @@ app_logo_url = "/assets/sl_payment_gateways/images/app-logo.png"
 
 # This app is mostly pure Python utility code (RSA/hash signing for
 # gateway checkouts) exposed as whitelisted methods - no fixtures, no
-# doc_events, no scheduled jobs. It does ship three Single DocTypes
-# ("WebXPay Settings", "PayHere Settings", "Peoples Bank Settings" - see
-# sl_payment_gateways/doctype/) that Frappe creates automatically on
+# doc_events, no scheduled jobs. It does ship four Single DocTypes
+# ("WebXPay Settings", "PayHere Settings", "Peoples Bank USD Settings",
+# "Peoples Bank LKR Settings" - see sl_payment_gateways/doctype/) that
+# Frappe creates automatically on
 # `bench install-app` / `bench migrate`, so credentials can be entered
 # from Desk instead of a site_config.json edit. Nothing else needed
 # here.

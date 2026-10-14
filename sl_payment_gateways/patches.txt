@@ -1,0 +1,4 @@
+[pre_model_sync]
+
+[post_model_sync]
+sl_payment_gateways.patches.v0_6.split_peoples_bank_gateway

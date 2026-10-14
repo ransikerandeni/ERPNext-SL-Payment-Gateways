@@ -12,14 +12,17 @@ import pytest
 from sl_payment_gateways.sl_payment_gateways.doctype.payhere_settings.payhere_settings import (
 	PayHereSettings,
 )
-from sl_payment_gateways.sl_payment_gateways.doctype.peoples_bank_settings.peoples_bank_settings import (
-	PeoplesBankSettings,
+from sl_payment_gateways.sl_payment_gateways.doctype.peoples_bank_lkr_settings.peoples_bank_lkr_settings import (
+	PeoplesBankLKRSettings,
+)
+from sl_payment_gateways.sl_payment_gateways.doctype.peoples_bank_usd_settings.peoples_bank_usd_settings import (
+	PeoplesBankUSDSettings,
 )
 from sl_payment_gateways.sl_payment_gateways.doctype.webxpay_settings.webxpay_settings import (
 	WebXPaySettings,
 )
 
-SETTINGS_CLASSES = (WebXPaySettings, PayHereSettings, PeoplesBankSettings)
+SETTINGS_CLASSES = (WebXPaySettings, PayHereSettings, PeoplesBankUSDSettings, PeoplesBankLKRSettings)
 
 
 @pytest.mark.parametrize("settings_class", SETTINGS_CLASSES)
@@ -45,3 +48,17 @@ class TestPaymentRequestSubmissionHook:
 
 		assert settings.on_payment_request_submission(None) is False
 		assert settings.on_payment_request_submission({"grand_total": 10}) is False
+
+
+@pytest.mark.parametrize(
+	("doctype", "settings_class"),
+	[
+		("Peoples Bank USD Settings", PeoplesBankUSDSettings),
+		("Peoples Bank LKR Settings", PeoplesBankLKRSettings),
+	],
+)
+def test_controller_is_named_the_way_frappe_looks_it_up(doctype, settings_class):
+	# Frappe finds a doctype's controller by its name with spaces and hyphens
+	# removed. A class named any other way is silently not used, and the
+	# Payment Request hook above goes with it.
+	assert settings_class.__name__ == doctype.replace(" ", "").replace("-", "")

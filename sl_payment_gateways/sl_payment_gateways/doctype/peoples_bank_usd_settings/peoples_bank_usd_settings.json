@@ -1,0 +1,129 @@
+{
+ "actions": [],
+ "creation": "2026-10-14 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "enabled",
+  "use_sandbox",
+  "sandbox_section",
+  "sandbox_profile_id",
+  "sandbox_access_key",
+  "sandbox_secret_key",
+  "sandbox_checkout_url",
+  "use_test_billing_data",
+  "live_section",
+  "live_profile_id",
+  "live_access_key",
+  "live_secret_key",
+  "live_checkout_url"
+ ],
+ "fields": [
+  {
+   "default": "0",
+   "description": "Ticked = People's Bank (USD) is offered to payers whose fee is priced in USD, and will sign checkouts. Untick to withdraw it without touching the credentials below.",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled"
+  },
+  {
+   "default": "1",
+   "description": "Ticked = checkout goes through the CyberSource test host (testsecureacceptance.cybersource.com), using the USD test profile People's Bank issued you. Untick only once the Live section below is fully configured and tested.",
+   "fieldname": "use_sandbox",
+   "fieldtype": "Check",
+   "label": "Use Sandbox"
+  },
+  {
+   "fieldname": "sandbox_section",
+   "fieldtype": "Section Break",
+   "label": "Sandbox Credentials"
+  },
+  {
+   "description": "Test Profile ID of the USD profile from People's Bank - a UUID, e.g. 3DEEB7C4-3568-4CDF-8247-1A15527CD3B2.",
+   "fieldname": "sandbox_profile_id",
+   "fieldtype": "Data",
+   "label": "Sandbox Profile ID"
+  },
+  {
+   "description": "Test Access Key for that profile - 32 hex characters. Posted from the browser by design; it is not a secret on its own.",
+   "fieldname": "sandbox_access_key",
+   "fieldtype": "Data",
+   "label": "Sandbox Access Key"
+  },
+  {
+   "description": "Test Secret Key for that profile - a long hex string. This is the HMAC key: it never leaves the server, and anyone holding it can sign a payment.",
+   "fieldname": "sandbox_secret_key",
+   "fieldtype": "Password",
+   "label": "Sandbox Secret Key"
+  },
+  {
+   "description": "Optional. Leave blank to post to CyberSource's own test endpoint. Set it only if People's Bank gave you a bank-hosted checkout page (e.g. their QR middle page at egateway.peoplesbank.lk) that takes the same signed fields. Must be https://.",
+   "fieldname": "sandbox_checkout_url",
+   "fieldtype": "Data",
+   "label": "Sandbox Checkout URL"
+  },
+  {
+   "fieldname": "use_test_billing_data",
+   "fieldtype": "Check",
+   "label": "Use CyberSource Test Billing Data",
+   "default": "0",
+   "depends_on": "eval:doc.use_sandbox",
+   "description": "Sandbox only. Replaces the payer's name, email and billing address with CyberSource's standard test values (noreal name, 1295 Charleston Rd, Mountain View, CA 94043, US). Use it to take the billing address out of the picture while debugging a decline. Ignored entirely when Use Sandbox is off, so it can never reach a live charge."
+  },
+  {
+   "fieldname": "live_section",
+   "fieldtype": "Section Break",
+   "label": "Live Credentials"
+  },
+  {
+   "description": "Production Profile ID of the USD profile from People's Bank. A separate profile from the test one - never the same value.",
+   "fieldname": "live_profile_id",
+   "fieldtype": "Data",
+   "label": "Live Profile ID"
+  },
+  {
+   "description": "Production Access Key for that profile.",
+   "fieldname": "live_access_key",
+   "fieldtype": "Data",
+   "label": "Live Access Key"
+  },
+  {
+   "description": "Production Secret Key for that profile.",
+   "fieldname": "live_secret_key",
+   "fieldtype": "Password",
+   "label": "Live Secret Key"
+  },
+  {
+   "description": "Optional. Leave blank to post to CyberSource's own production endpoint. Must be https://.",
+   "fieldname": "live_checkout_url",
+   "fieldtype": "Data",
+   "label": "Live Checkout URL"
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-10-14 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "SL Payment Gateways",
+ "name": "Peoples Bank USD Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "quick_entry": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1,
+ "description": "Credentials for the People's Bank (USD) gateway - the CyberSource profile People's Bank issued for charging in USD."
+}

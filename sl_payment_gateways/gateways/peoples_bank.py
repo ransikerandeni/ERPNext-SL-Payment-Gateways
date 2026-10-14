@@ -49,11 +49,22 @@ signed_date_time) is signed, and so are the `override_*` URLs - the
 guide explicitly calls out `override_custom_receipt_page` as a field
 that must be signed to prevent tampering.
 
-Settings ("Peoples Bank Settings" single doctype) hold sandbox and live
-credential sets, selected by `use_sandbox` - the bank issues a test
-profile on the CyberSource test host and a separate live one. They also
-hold `allow_lkr`, which decides whether this gateway will sign a checkout
-in LKR at all; see supported_currencies() below. See docs/peoples_bank.md.
+ONE MODULE, TWO GATEWAYS
+------------------------
+People's Bank issues a separate CyberSource profile per currency - one
+that charges in USD, one that charges in LKR - each with its own profile
+id, access key and secret key, and each with its own sandbox and live
+pair. So there are two gateways, "Peoples Bank (USD)" and "Peoples Bank
+(LKR)", registered by the thin modules peoples_bank_usd.py and
+peoples_bank_lkr.py. Everything protocol-shaped lives here, once; what
+differs between the two is a `Profile` - which Settings doctype to read
+and the one currency that profile charges in.
+
+Each gateway's Settings ("Peoples Bank USD Settings" / "Peoples Bank LKR
+Settings" single doctypes) hold sandbox and live credential sets, selected
+by `use_sandbox` - the bank issues a test profile on the CyberSource test
+host and a separate live one - plus an `enabled` flag that decides whether
+the gateway is offered at all. See docs/peoples_bank.md.
 
 RESIDUAL RISKS you must handle in your own return handler
 ---------------------------------------------------------
@@ -139,40 +150,48 @@ def _reconciliation_ref(order_id):
 SANDBOX_CHECKOUT_URL = "https://testsecureacceptance.cybersource.com/pay"
 LIVE_CHECKOUT_URL = "https://secureacceptance.cybersource.com/pay"
 
-# WHAT THIS GATEWAY WILL CHARGE IN.
-#
-# USD always; LKR only once "Allow LKR Charges" is ticked in Settings.
-#
-# The gate is not caution for its own sake. People's Bank has to enable LKR on
-# the CyberSource profile itself, and until they do the whole checkout dies at
-# the hosted page with decision=ERROR, reason_code=102, invalid_fields=currency
-# - the payer gets there, sees a card form, and cannot pay. An option that
-# always fails is worse than no option, so LKR stays off until somebody has
-# confirmed with the bank and put one LKR payment through the sandbox.
-#
-# Order is the declared preference, used only where a caller has no better
-# basis for choosing. It has one: charging in the currency the fee is already
-# priced in avoids a conversion entirely, and create_gateway_payment picks that
-# way. USD leads here purely because it is the one that is always available.
-BASE_CURRENCY = "USD"
-GATED_CURRENCY = "LKR"
-
-# Static fallback for a caller that cannot reach Settings (see
-# api.gateway_currencies). Never wider than what supported_currencies() allows.
-CURRENCIES = (BASE_CURRENCY,)
+# Shared by peoples_bank_usd and peoples_bank_lkr, so api.list_gateways() can
+# tell the two are alternatives to each other: of the pair, only the one that
+# charges in the fee's own currency is offered for that fee.
+FAMILY = "Peoples Bank"
 
 
-def supported_currencies():
-	"""The currencies a checkout may be built in right now, preferred first."""
-	settings = _settings()
+class Profile:
+	"""One People's Bank gateway: a CyberSource profile that charges in one currency.
 
-	# .get() rather than attribute access: a site running this code before the
-	# doctype has been migrated has no `allow_lkr` field at all, and that must
-	# read as off rather than raising mid-checkout.
-	if settings.get("allow_lkr"):
-		return [BASE_CURRENCY, GATED_CURRENCY]
+	The bank issued one profile per currency rather than one profile taking
+	both, so the currency is a property of the profile - and of the Settings
+	doctype holding its credentials - not a choice made per checkout. A profile
+	asked to sign any other currency refuses (see build_checkout): CyberSource
+	would otherwise reject it at the hosted page with decision=ERROR,
+	reason_code=102, invalid_fields=currency, after the payer has got there.
+	"""
 
-	return [BASE_CURRENCY]
+	def __init__(self, gateway, settings_doctype, currency):
+		self.gateway = gateway
+		self.settings_doctype = settings_doctype
+		self.currency = currency
+
+	def __repr__(self):
+		return "Profile(%r)" % (self.gateway,)
+
+
+USD = Profile("Peoples Bank (USD)", "Peoples Bank USD Settings", "USD")
+LKR = Profile("Peoples Bank (LKR)", "Peoples Bank LKR Settings", "LKR")
+
+
+def is_enabled(profile):
+	"""Is this gateway switched on in its Settings?
+
+	Off means it is not offered to payers and will not sign a checkout. It is
+	never consulted by verify_response(): a payer who started a checkout before
+	somebody switched the gateway off has still paid, and their response must
+	still settle.
+
+	.get() rather than attribute access: a site running this code before the
+	doctype has been migrated has no `enabled` field, and that reads as off.
+	"""
+	return bool(_settings(profile).get("enabled"))
 
 
 # A single-message sale: authorise and submit for settlement in one step.
@@ -304,12 +323,13 @@ REFERENCE_FIELD = "req_reference_number"
 MAX_SIGNED_FIELDS = 250
 
 
-def _settings():
+def _settings(profile):
 	try:
-		return frappe.get_doc("Peoples Bank Settings")
+		return frappe.get_doc(profile.settings_doctype)
 	except frappe.DoesNotExistError:
 		frappe.throw(
-			"Peoples Bank Settings doctype does not exist - create it before using People's Bank."
+			"%s doctype does not exist - run `bench migrate` before using %s."
+			% (profile.settings_doctype, profile.gateway)
 		)
 
 
@@ -348,8 +368,8 @@ def _checkout_url(settings):
 	parsed = urlparse(url)
 	if parsed.scheme != "https" or not parsed.netloc:
 		frappe.throw(
-			"Peoples Bank Settings holds an invalid `%scheckout_url`: it must be an https:// URL. "
-			"Leave it blank to use CyberSource's own endpoint." % (prefix,)
+			"%s holds an invalid `%scheckout_url`: it must be an https:// URL. "
+			"Leave it blank to use CyberSource's own endpoint." % (settings.doctype, prefix)
 		)
 
 	return url
@@ -408,25 +428,35 @@ def _data_to_sign(params, field_names) -> str:
 	)
 
 
-def build_checkout(order_id, amount, currency, customer):
+def build_checkout(profile, order_id, amount, currency, customer):
 	order_id = validate_order_id(order_id, max_length=MAX_ORDER_ID_LENGTH)
 	amount = format_amount(amount)
 	currency = validate_currency(currency)
 
-	settings = _settings()
+	settings = _settings(profile)
 
-	# Defence in depth. create_gateway_payment validates the payer's choice
-	# against this same list before it gets here, but build_checkout is what
-	# actually signs the amount-and-currency pair, so it does not take the
-	# caller's word for which currencies the profile accepts.
-	allowed = supported_currencies()
-
-	if currency not in allowed:
+	# Before anything is signed: a gateway switched off in Settings is one the
+	# payer should never have been offered, so a checkout reaching here anyway
+	# is refused rather than built against credentials nobody has confirmed.
+	if not settings.get("enabled"):
 		frappe.throw(
-			"People's Bank cannot be charged in %s. Accepted: %s. "
-			"(LKR is available once People's Bank has enabled it on the CyberSource "
-			"profile and \"Allow LKR Charges\" is ticked in Peoples Bank Settings.)"
-			% (frappe.utils.escape_html(currency), ", ".join(allowed))
+			"%s is switched off. Tick \"Enabled\" in %s to take payments through it."
+			% (profile.gateway, profile.settings_doctype)
+		)
+
+	# Defence in depth. create_gateway_payment only sends a fee to the profile
+	# for its currency, but build_checkout is what actually signs the
+	# amount-and-currency pair, so it does not take the caller's word for it.
+	if currency != profile.currency:
+		frappe.throw(
+			"%s cannot be charged in %s - it charges in %s only. "
+			"Use the People's Bank gateway for %s instead."
+			% (
+				profile.gateway,
+				frappe.utils.escape_html(currency),
+				profile.currency,
+				frappe.utils.escape_html(currency),
+			)
 		)
 
 	# Both conditions, and the sandbox one is the load-bearing half: a
@@ -541,7 +571,7 @@ def _signed_field_names(form_dict):
 	return names
 
 
-def verify_response(form_dict):
+def verify_response(profile, form_dict):
 	signature = form_dict.get("signature")
 
 	if not signature:
@@ -549,7 +579,7 @@ def verify_response(form_dict):
 
 	names = _signed_field_names(form_dict)
 
-	settings = _settings()
+	settings = _settings(profile)
 
 	expected = _sign(_data_to_sign(form_dict, names), _secret_key(settings))
 

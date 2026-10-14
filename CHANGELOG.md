@@ -1,6 +1,51 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 — 2026-10-14
+
+### Changed — People's Bank is now two gateways
+
+People's Bank asked for a separate CyberSource profile per currency, so the
+single **Peoples Bank** gateway is split in two:
+
+- **`Peoples Bank (USD)`**: the existing profile, renamed. Its credentials
+  now live in **`Peoples Bank USD Settings`**.
+- **`Peoples Bank (LKR)`**: new, with its own profile and its own
+  **`Peoples Bank LKR Settings`**.
+
+Each has its own Sandbox and Live credential sets and `use_sandbox` switch,
+exactly as before, plus a new **Enabled** checkbox. Each charges in its own
+currency only, and `build_checkout()` refuses any other before signing.
+
+- **`api.list_gateways(currency=...)`**: pass the fee's currency to get the
+  gateways to offer for it. A USD fee lists People's Bank (USD), an LKR fee
+  lists People's Bank (LKR), and nothing is converted. If the matching
+  gateway is switched off, the other one is offered instead and the caller
+  converts, as before the split. Without `currency`, every enabled gateway
+  is listed.
+- **Removed `Allow LKR Charges` (`allow_lkr`)** and
+  `peoples_bank.supported_currencies()`. LKR is now a profile of its own,
+  not an option on the USD one.
+- **`api.list_gateway_currencies()`** now covers every implemented gateway,
+  enabled or not, plus the legacy name `Peoples Bank` (→ USD).
+- **The legacy name `Peoples Bank` still dispatches**, to the USD gateway.
+  A checkout signed before the upgrade returns with `?gateway=Peoples Bank`
+  and still verifies. It is never listed.
+
+### Migration
+
+The post-model-sync patch `patches/v0_6/split_peoples_bank_gateway` runs on
+`bench migrate`. It:
+
+- copies every value and both secret keys from `Peoples Bank Settings` into
+  `Peoples Bank USD Settings`, ticks **Enabled** there, and drops the old
+  doctype;
+- renames the `Payment Gateway` record `Peoples Bank` to
+  `Peoples Bank (USD)`, carrying its Payment Gateway Accounts along;
+- creates a `Peoples Bank (LKR)` Payment Gateway beside it.
+
+`Peoples Bank LKR Settings` starts empty and switched off. Until it is
+enabled, LKR fees keep going through the USD gateway, converted at the
+maintained rate.
 
 - Every gateway's `verify_response()` now returns a top-level `transaction_id`
   (People's Bank: CyberSource's `transaction_id`, the "Request ID" shown in the

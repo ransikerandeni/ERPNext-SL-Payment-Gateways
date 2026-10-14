@@ -26,19 +26,40 @@ straight from a browser or curl is refused.
 
 import frappe
 
-from sl_payment_gateways.gateways import commercial_bank, payhere, peoples_bank, sampath_bank, webxpay
+from sl_payment_gateways.gateways import (
+	commercial_bank,
+	payhere,
+	peoples_bank_lkr,
+	peoples_bank_usd,
+	sampath_bank,
+	webxpay,
+)
 
 GATEWAYS = {
 	"WebXPay": webxpay,
 	"PayHere": payhere,
-	"Peoples Bank": peoples_bank,
+	# People's Bank issues one CyberSource profile per currency, so it is two
+	# gateways - see gateways/peoples_bank.py.
+	"Peoples Bank (USD)": peoples_bank_usd,
+	"Peoples Bank (LKR)": peoples_bank_lkr,
 	"Sampath Bank": sampath_bank,
 	"Commercial Bank": commercial_bank,
 }
 
 # Gateways with a real, working implementation - used by list_gateways()
 # so the client script only offers ones that actually work.
-IMPLEMENTED = ("WebXPay", "PayHere", "Peoples Bank")
+IMPLEMENTED = ("WebXPay", "PayHere", "Peoples Bank (USD)", "Peoples Bank (LKR)")
+
+# Names a gateway used to go by, still dispatched so a payment started before
+# the rename settles: its return URL carries ?gateway=<old name>, fixed at the
+# moment the checkout was signed. Never offered, never listed.
+#
+# "Peoples Bank" was the single USD profile before the bank split it per
+# currency; its credentials moved to Peoples Bank USD Settings (see
+# patches/v0_6/split_peoples_bank_gateway.py), so it verifies as USD.
+LEGACY_NAMES = {
+	"Peoples Bank": "Peoples Bank (USD)",
+}
 
 # Keys Frappe's own transport puts in form_dict. create_payment takes
 # **customer, so without this they'd be forwarded to gateway modules as
@@ -49,7 +70,7 @@ FRAMEWORK_KEYS = frozenset(
 
 
 def _get_gateway(name):
-	module = GATEWAYS.get(name)
+	module = GATEWAYS.get(LEGACY_NAMES.get(name, name))
 	if not module:
 		# Escaped: frappe.throw renders its message as HTML in Desk, and
 		# `name` is attacker-controlled.
@@ -93,25 +114,90 @@ def _refuse(method):
 	)
 
 
+def _is_enabled(name):
+	"""Is `name` switched on? A module without an `is_enabled()` always is.
+
+	People's Bank's gateways read an Enabled checkbox from their Settings. A
+	failure to read it (an unmigrated site) reads as off and is logged: a
+	gateway nobody can confirm is configured must not be offered to a payer.
+	"""
+	resolver = getattr(GATEWAYS[name], "is_enabled", None)
+
+	if not resolver:
+		return True
+
+	try:
+		return bool(resolver())
+	except Exception:
+		frappe.log_error(
+			title="Could not read whether %s is enabled" % (name,),
+			message=frappe.get_traceback(),
+		)
+		return False
+
+
+def _offered_for(names, currency):
+	"""`names`, less the gateways that should not be offered for a fee in `currency`.
+
+	Gateways that share a `FAMILY` are alternatives to each other - People's
+	Bank (USD) and People's Bank (LKR) are one bank's two profiles - and only
+	the one that charges in the fee's own currency is offered: a USD fee shows
+	People's Bank (USD), an LKR fee People's Bank (LKR), and nothing is
+	converted.
+
+	Where no enabled member of the family takes that currency (the LKR profile
+	not switched on yet, say), the family's first enabled member is offered
+	instead and the caller converts, which is what happened before the bank
+	split its profiles. A gateway with no family is never filtered.
+	"""
+	currency = str(currency).strip().upper()
+
+	offered = []
+
+	for name in names:
+		family = getattr(GATEWAYS[name], "FAMILY", None)
+
+		if not family:
+			offered.append(name)
+			continue
+
+		siblings = [n for n in names if getattr(GATEWAYS[n], "FAMILY", None) == family]
+		matching = [n for n in siblings if currency in gateway_currencies(n)]
+
+		if name in matching or (not matching and name == siblings[0]):
+			offered.append(name)
+
+	return offered
+
+
 @frappe.whitelist()
-def list_gateways():
-	"""Gateway names with a real implementation, for the client script to
-	render "Pay with X" options from without hardcoding the list."""
-	return list(IMPLEMENTED)
+def list_gateways(currency=None):
+	"""Gateway names with a real implementation that are switched on, for the
+	client script to render "Pay with X" options from without hardcoding the list.
+
+	Pass `currency` - the currency the fee is priced in - to get only the
+	gateways to offer for that fee (see _offered_for).
+	"""
+	names = [name for name in IMPLEMENTED if _is_enabled(name)]
+
+	if currency:
+		names = _offered_for(names, currency)
+
+	return names
 
 
-# What a gateway charges in when its module says nothing. Every gateway here
-# except People's Bank collects LKR natively and has no second option, so the
-# static default is the honest answer for them rather than a placeholder.
+# What a gateway charges in when its module says nothing. WebXPay and PayHere
+# collect LKR natively and have no second option, so the static default is the
+# honest answer for them rather than a placeholder.
 DEFAULT_CURRENCIES = ("LKR",)
 
 
 def gateway_currencies(gateway):
 	"""The currencies `gateway` will accept a checkout in, preferred first.
 
-	A module may answer dynamically with `supported_currencies()` - People's
-	Bank does, because LKR is gated on a Settings checkbox - or statically with
-	a `CURRENCIES` tuple, or not at all.
+	A module may answer dynamically with `supported_currencies()`, or
+	statically with a `CURRENCIES` tuple (People's Bank's two gateways do: each
+	profile charges in exactly one currency), or not at all.
 
 	A module that answers dynamically is reading Settings, and Settings can be
 	missing on a site where the gateway was never configured. That must not
@@ -142,8 +228,14 @@ def list_gateway_currencies():
 	should render the currencies a gateway actually accepts today, not a list
 	hardcoded in a client script that nobody updates when Settings change.
 	Reveals no credential and changes no state.
+
+	Every implemented gateway, switched on or not, plus the legacy names: a
+	return handler settling a payment started under an old name, or through a
+	gateway switched off since, still needs to know what it charged in.
 	"""
-	return {name: gateway_currencies(name) for name in IMPLEMENTED}
+	names = list(IMPLEMENTED) + list(LEGACY_NAMES)
+
+	return {name: gateway_currencies(name) for name in names}
 
 
 @frappe.whitelist()

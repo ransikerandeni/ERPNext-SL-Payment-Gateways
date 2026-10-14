@@ -11,7 +11,7 @@ live while still signing with test credentials, or the reverse.
 import pytest
 
 import frappe
-from sl_payment_gateways.gateways import payhere, peoples_bank, webxpay
+from sl_payment_gateways.gateways import payhere, peoples_bank, peoples_bank_lkr, webxpay
 
 from .conftest import (
 	PAYHERE_LIVE_MERCHANT_ID,
@@ -235,7 +235,7 @@ class TestPeoplesBankModes:
 	settling a live order on a replayed test response."""
 
 	def test_sandbox_uses_the_test_host_and_its_credentials(self, peoples_bank_settings):
-		result = peoples_bank.build_checkout("SO-1", "1500.00", "LKR", {})
+		result = peoples_bank_lkr.build_checkout("SO-1", "1500.00", "LKR", {})
 		fields = result["fields"]
 
 		assert result["checkout_url"] == peoples_bank.SANDBOX_CHECKOUT_URL
@@ -246,7 +246,7 @@ class TestPeoplesBankModes:
 	def test_live_uses_the_production_host_and_its_credentials(self, peoples_bank_settings):
 		peoples_bank_settings["use_sandbox"] = 0
 
-		result = peoples_bank.build_checkout("SO-1", "1500.00", "LKR", {})
+		result = peoples_bank_lkr.build_checkout("SO-1", "1500.00", "LKR", {})
 		fields = result["fields"]
 
 		assert result["checkout_url"] == peoples_bank.LIVE_CHECKOUT_URL
@@ -259,7 +259,7 @@ class TestPeoplesBankModes:
 	def test_live_checkout_is_not_signed_with_the_sandbox_key(self, peoples_bank_settings):
 		peoples_bank_settings["use_sandbox"] = 0
 
-		fields = peoples_bank.build_checkout("SO-1", "1500.00", "LKR", {})["fields"]
+		fields = peoples_bank_lkr.build_checkout("SO-1", "1500.00", "LKR", {})["fields"]
 
 		assert fields["signature"] != reference_signature(
 			fields, fields["signed_field_names"].split(",")
@@ -271,13 +271,13 @@ class TestPeoplesBankModes:
 		peoples_bank_settings["use_sandbox"] = 0
 
 		with pytest.raises(frappe.ValidationError, match="signature verification failed"):
-			peoples_bank.verify_response(payload)
+			peoples_bank_lkr.verify_response(payload)
 
 	def test_live_response_is_rejected_in_sandbox_mode(self, peoples_bank_settings, peoples_bank_response):
 		payload = peoples_bank_response(profile_id=PEOPLES_LIVE_PROFILE_ID, secret=PEOPLES_LIVE_SECRET)
 
 		with pytest.raises(frappe.ValidationError, match="signature verification failed"):
-			peoples_bank.verify_response(payload)
+			peoples_bank_lkr.verify_response(payload)
 
 	def test_a_missing_live_secret_names_that_exact_field(self, peoples_bank_settings):
 		peoples_bank_settings["use_sandbox"] = 0
@@ -286,13 +286,13 @@ class TestPeoplesBankModes:
 		# Never falls back to the sandbox key, which would sign a live
 		# checkout with test credentials.
 		with pytest.raises(frappe.ValidationError, match="live_secret_key"):
-			peoples_bank.build_checkout("SO-1", "1.00", "LKR", {})
+			peoples_bank_lkr.build_checkout("SO-1", "1.00", "LKR", {})
 
 	def test_the_checkout_url_override_is_per_mode(self, peoples_bank_settings):
 		peoples_bank_settings["sandbox_checkout_url"] = "https://egateway.peoplesbank.lk/uat/index.php"
 		peoples_bank_settings["live_checkout_url"] = "https://egateway.peoplesbank.lk/live/index.php"
 
-		assert peoples_bank.build_checkout("SO-1", "1.00", "LKR", {})["checkout_url"].endswith("/uat/index.php")
+		assert peoples_bank_lkr.build_checkout("SO-1", "1.00", "LKR", {})["checkout_url"].endswith("/uat/index.php")
 
 		peoples_bank_settings["use_sandbox"] = 0
-		assert peoples_bank.build_checkout("SO-1", "1.00", "LKR", {})["checkout_url"].endswith("/live/index.php")
+		assert peoples_bank_lkr.build_checkout("SO-1", "1.00", "LKR", {})["checkout_url"].endswith("/live/index.php")

@@ -4,15 +4,22 @@ import pytest
 
 import frappe
 from sl_payment_gateways import api
-from sl_payment_gateways.gateways import peoples_bank
+from sl_payment_gateways.gateways import peoples_bank_usd
+
+from . import frappe_stub
 
 CREATE_PAYMENT_CMD = "sl_payment_gateways.api.create_payment"
 NOTIFY = "/api/method/gateway_payment_return?gateway=PayHere"
 
 
 class TestGatewayDispatch:
-	def test_lists_only_working_gateways(self):
-		assert api.list_gateways() == ["WebXPay", "PayHere", "Peoples Bank"]
+	def test_lists_only_working_gateways(self, peoples_bank_settings):
+		assert api.list_gateways() == ["WebXPay", "PayHere", "Peoples Bank (USD)", "Peoples Bank (LKR)"]
+
+	def test_the_legacy_name_is_dispatched_but_never_listed(self, peoples_bank_settings):
+		# A checkout started before the split returns with ?gateway=Peoples Bank.
+		assert api._get_gateway("Peoples Bank") is peoples_bank_usd
+		assert "Peoples Bank" not in api.list_gateways()
 
 	def test_scaffolded_gateways_are_registered_but_not_offered(self):
 		for name in ("Sampath Bank", "Commercial Bank"):
@@ -62,7 +69,7 @@ class TestGatewayDispatch:
 		assert set(api.payment_return("WebXPay")) == expected_keys
 
 		frappe.local.form_dict = peoples_bank_response()
-		assert set(api.payment_return("Peoples Bank")) == expected_keys
+		assert set(api.payment_return("Peoples Bank (LKR)")) == expected_keys
 
 	def test_merchant_verified_reflects_the_protocol(
 		self,
@@ -86,7 +93,7 @@ class TestGatewayDispatch:
 
 		# People's Bank signs with a key issued to our profile alone.
 		frappe.local.form_dict = peoples_bank_response()
-		assert api.payment_return("Peoples Bank")["merchant_verified"] is True
+		assert api.payment_return("Peoples Bank (LKR)")["merchant_verified"] is True
 
 	def test_unknown_gateway_throws(self):
 		with pytest.raises(frappe.ValidationError, match="Unknown payment gateway"):
@@ -116,46 +123,89 @@ class TestGatewayCurrencies:
 		assert api.gateway_currencies("WebXPay") == ["LKR"]
 		assert api.gateway_currencies("PayHere") == ["LKR"]
 
-	def test_peoples_bank_reports_what_its_settings_allow(
-		self, peoples_bank_usd_only_settings
-	):
+	def test_each_peoples_bank_gateway_reports_its_one_currency(self):
+		# Static: the currency is the profile's, not a setting - so it needs no
+		# Settings to answer, and cannot fail to.
+		assert api.gateway_currencies("Peoples Bank (USD)") == ["USD"]
+		assert api.gateway_currencies("Peoples Bank (LKR)") == ["LKR"]
 		assert api.gateway_currencies("Peoples Bank") == ["USD"]
 
-	def test_peoples_bank_gains_lkr_when_it_is_enabled(self, peoples_bank_settings):
-		assert api.gateway_currencies("Peoples Bank") == ["USD", "LKR"]
-
 	def test_unreadable_settings_fall_back_to_the_static_answer(self, monkeypatch):
-		# No Peoples Bank Settings fixture: _settings() throws. A front end
-		# asking "what can I offer?" gets the module's static answer, never an
-		# exception - the alternative is a payment screen with no Pay button.
+		# A module answering dynamically that fails still yields its static answer.
 		def explode():
 			raise RuntimeError("Settings gone")
 
-		monkeypatch.setattr(peoples_bank, "supported_currencies", explode)
+		monkeypatch.setattr(peoples_bank_usd, "supported_currencies", explode, raising=False)
 
-		assert api.gateway_currencies("Peoples Bank") == list(peoples_bank.CURRENCIES)
-
-		# Silently, though, is not the same as invisibly: a site whose gateway
-		# settings cannot be read has something wrong with it.
+		assert api.gateway_currencies("Peoples Bank (USD)") == ["USD"]
 		assert [e["title"] for e in frappe.error_log] == [
-			"Could not read Peoples Bank supported currencies"
+			"Could not read Peoples Bank (USD) supported currencies"
 		]
 
-	def test_the_static_fallback_is_never_wider_than_the_gate(self):
-		# CURRENCIES is what a caller gets when Settings cannot be read, so it
-		# must not offer a currency the gate would have withheld.
-		assert set(peoples_bank.CURRENCIES) == {"USD"}
+	def test_lists_every_implemented_gateway_and_legacy_name(self, peoples_bank_settings):
+		peoples_bank_settings["enabled"] = 0
 
-	def test_lists_every_implemented_gateway(self, peoples_bank_settings):
 		reported = api.list_gateway_currencies()
 
-		assert sorted(reported) == sorted(api.list_gateways())
-		assert reported["Peoples Bank"] == ["USD", "LKR"]
+		# Switched off or not - a return handler still needs to know.
+		assert sorted(reported) == sorted(list(api.IMPLEMENTED) + ["Peoples Bank"])
+		assert reported["Peoples Bank (USD)"] == ["USD"]
+		assert reported["Peoples Bank (LKR)"] == ["LKR"]
 		assert reported["WebXPay"] == ["LKR"]
 
 	def test_an_unknown_gateway_is_refused_rather_than_guessed(self):
 		with pytest.raises(frappe.ValidationError, match="Unknown payment gateway"):
 			api.gateway_currencies("Bank of Nowhere")
+
+
+class TestGatewaysForAFee:
+	"""list_gateways(currency=...): which People's Bank gateway a fee is offered."""
+
+	@pytest.fixture
+	def profiles(self):
+		usd = frappe_stub.FakeSettingsDoc({"enabled": 1})
+		lkr = frappe_stub.FakeSettingsDoc({"enabled": 1})
+		frappe.test_docs["Peoples Bank USD Settings"] = usd
+		frappe.test_docs["Peoples Bank LKR Settings"] = lkr
+		return usd, lkr
+
+	def test_a_usd_fee_is_offered_the_usd_gateway(self, profiles):
+		assert api.list_gateways(currency="USD") == ["WebXPay", "PayHere", "Peoples Bank (USD)"]
+
+	def test_an_lkr_fee_is_offered_the_lkr_gateway(self, profiles):
+		assert api.list_gateways(currency="lkr") == ["WebXPay", "PayHere", "Peoples Bank (LKR)"]
+
+	def test_without_a_currency_both_are_listed(self, profiles):
+		assert "Peoples Bank (USD)" in api.list_gateways()
+		assert "Peoples Bank (LKR)" in api.list_gateways()
+
+	def test_a_switched_off_gateway_is_not_listed(self, profiles):
+		profiles[1]["enabled"] = 0
+
+		assert "Peoples Bank (LKR)" not in api.list_gateways()
+
+	def test_an_lkr_fee_falls_back_to_usd_while_lkr_is_off(self, profiles):
+		# The LKR profile not set up yet: LKR fees still have a way to pay,
+		# converted to USD exactly as before the split.
+		profiles[1]["enabled"] = 0
+
+		assert api.list_gateways(currency="LKR") == ["WebXPay", "PayHere", "Peoples Bank (USD)"]
+
+	def test_a_usd_fee_falls_back_to_lkr_while_usd_is_off(self, profiles):
+		profiles[0]["enabled"] = 0
+
+		assert api.list_gateways(currency="USD") == ["WebXPay", "PayHere", "Peoples Bank (LKR)"]
+
+	def test_both_off_offers_no_peoples_bank(self, profiles):
+		profiles[0]["enabled"] = 0
+		profiles[1]["enabled"] = 0
+
+		assert api.list_gateways(currency="USD") == ["WebXPay", "PayHere"]
+
+	def test_unreadable_settings_hide_the_gateway_and_say_so(self):
+		# No Settings at all (unmigrated): not offered, and logged.
+		assert api.list_gateways() == ["WebXPay", "PayHere"]
+		assert "Could not read whether Peoples Bank (USD) is enabled" in [e["title"] for e in frappe.error_log]
 
 
 class TestCreatePaymentIsNotAPublicEndpoint:

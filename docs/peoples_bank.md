@@ -3,8 +3,8 @@
 Covers both environments: **Sandbox** (CyberSource's test host, for testing) and **Live** (real money). The app holds credentials for both at once and switches between them with a single checkbox.
 
 - [How People's Bank works here](#how-peoples-bank-works-here)
-- [1. Find the Settings DocType](#1-find-the-settings-doctype)
-- [Currencies](#currencies)
+- [Two gateways, one per currency](#two-gateways-one-per-currency)
+- [1. Find the Settings DocTypes](#1-find-the-settings-doctypes)
 - [2. Sandbox setup](#2-sandbox-setup)
 - [3. Testing in sandbox](#3-testing-in-sandbox)
 - [4. Going live](#4-going-live)
@@ -68,16 +68,40 @@ Two environments, two entirely separate merchant profiles:
 
 ---
 
-## 1. Find the Settings DocType
+## Two gateways, one per currency
 
-The app ships its own **Peoples Bank Settings** Single DocType (`sl_payment_gateways/sl_payment_gateways/doctype/peoples_bank_settings/`) — installing or updating the app creates it automatically. It's restricted to **System Manager** only, since it holds live payment credentials.
+People's Bank issues a **separate CyberSource profile for each currency**, so this app has two gateways:
 
-To open it: type `Peoples Bank Settings` into the Desk awesome-bar. Fields:
+| Gateway | Charges in | Settings DocType |
+|---|---|---|
+| **Peoples Bank (USD)** | USD only | `Peoples Bank USD Settings` |
+| **Peoples Bank (LKR)** | LKR only | `Peoples Bank LKR Settings` |
+
+Each gateway has its own profile ID, access key and secret key, for both Sandbox and Live. A profile asked to sign the other currency refuses before signing anything. If it didn't, CyberSource would reject the checkout at its hosted page with `decision=ERROR reason_code=102 invalid_fields=currency`, after the payer had already got there.
+
+**Which one a payer sees depends on the fee.** Front ends call `sl_payment_gateways.api.list_gateways(currency=<fee currency>)`:
+
+| Fee priced in | USD gateway | LKR gateway | Offered |
+|---|---|---|---|
+| USD | Enabled | (any) | **Peoples Bank (USD)**, no conversion |
+| LKR | (any) | Enabled | **Peoples Bank (LKR)**, no conversion |
+| LKR | Enabled | **Off** | Peoples Bank (USD), with the fee converted to USD at the maintained rate (as before the split) |
+| USD | **Off** | Enabled | Peoples Bank (LKR), with the fee converted to LKR |
+
+> **Upgrading from 0.5.x.** The old `Peoples Bank` gateway becomes `Peoples Bank (USD)`. On `bench migrate`, the patch copies its credentials into `Peoples Bank USD Settings` and ticks **Enabled** there. It also renames the `Payment Gateway` record and creates a `Peoples Bank (LKR)` record beside it. Checkouts started before the upgrade come back with `?gateway=Peoples Bank`, which still verifies, as USD.
+
+---
+
+## 1. Find the Settings DocTypes
+
+The app ships two Single DocTypes, **Peoples Bank USD Settings** and **Peoples Bank LKR Settings** (`sl_payment_gateways/sl_payment_gateways/doctype/peoples_bank_usd_settings/` and `…/peoples_bank_lkr_settings/`). Installing or updating the app creates them automatically. Both are restricted to **System Manager**, since they hold live payment credentials.
+
+To open one, type its name into the Desk awesome-bar. Both have the same fields:
 
 | Label | Fieldname | Type | Notes |
 |---|---|---|---|
+| Enabled | `enabled` | Check | Default `0`. Ticked = offered to payers and allowed to sign checkouts. Responses for payments already made are verified either way |
 | Use Sandbox | `use_sandbox` | Check | Default `1`. Ticked = CyberSource test host, unticked = live |
-| Allow LKR Charges | `allow_lkr` | Check | Default `0`. Unticked = USD only. See [Currencies](#currencies) |
 | Sandbox Profile ID | `sandbox_profile_id` | Data | A UUID, e.g. `3DEEB7C4-3568-4CDF-8247-1A15527CD3B2` |
 | Sandbox Access Key | `sandbox_access_key` | Data | 32 hex characters |
 | Sandbox Secret Key | `sandbox_secret_key` | Password | Long hex string — the HMAC key |
@@ -88,52 +112,29 @@ To open it: type `Peoples Bank Settings` into the Desk awesome-bar. Fields:
 | Live Secret Key | `live_secret_key` | Password | |
 | Live Checkout URL | `live_checkout_url` | Data | Optional, see below |
 
+**Never put the USD profile's credentials into the LKR Settings, or the reverse.** The bank issues each profile for one currency, so the other currency would fail at CyberSource.
+
 **The two Checkout URL fields are almost always left blank.** Blank means "post to CyberSource's own endpoint for this mode", which is what a standard Secure Acceptance profile wants. Set one only if People's Bank has put you behind their **own** hosted front end — their QR "middle page" at `egateway.peoplesbank.lk`, which takes the same signed fields at a different URL. Whatever you set must be `https://`.
 
 > The access key is **not** a secret: it is posted from the browser as part of the checkout form, by design. The **secret key is** — it is the HMAC key, and anyone holding it can sign a payment for your profile. It never leaves the server.
 
 ---
 
-## Currencies
-
-This gateway will sign a checkout in **USD** always, and in **LKR** only when
-**Allow LKR Charges** is ticked. `supported_currencies()` is the single answer
-to "what will it take?", and `build_checkout()` refuses anything outside it
-before signing a thing.
-
-**Leave the checkbox off until People's Bank has enabled LKR on your
-CyberSource profile.** A profile without it rejects the currency outright:
-
-```
-decision=ERROR  reason_code=102  invalid_fields=currency
-```
-
-That is not a decline the payer can do anything about — they reach the hosted
-page, see a card form, and cannot pay. Offering a currency that always fails is
-worse than not offering it, which is why the default is off rather than
-optimistic. Confirm with the bank, tick it, put one LKR payment through the
-sandbox, and only then let it reach live payers.
-
-A caller that wants to render a currency control should ask
-`sl_payment_gateways.api.list_gateway_currencies()` rather than hardcoding a
-list: it reports every implemented gateway's currencies, preferred first, and
-tracks this checkbox without anything being redeployed.
-
----
-
 ## 2. Sandbox setup
 
-**a. Get test credentials from People's Bank.** They come from your bank contact, not from a self-service signup: a test Profile ID, Access Key and Secret Key, issued against their CyberSource test account. Their integration pack (`cybs guide.docx`) is where these are listed.
+Do this once per gateway: once for USD, and again for LKR with the LKR profile's credentials.
 
-**b. Fill in the Settings.** Paste into `sandbox_profile_id`, `sandbox_access_key` and `sandbox_secret_key`, leave **Use Sandbox** ticked, and save.
+**a. Get test credentials from People's Bank.** They come from your bank contact, not from a self-service signup: a test Profile ID, Access Key and Secret Key **for each currency's profile**, issued against their CyberSource test account. Their integration pack (`cybs guide.docx`) is where these are listed.
+
+**b. Fill in the Settings.** Open that currency's Settings (`Peoples Bank USD Settings` or `Peoples Bank LKR Settings`). Paste into `sandbox_profile_id`, `sandbox_access_key` and `sandbox_secret_key`, leave **Use Sandbox** ticked, tick **Enabled**, and save.
 
 **c. Ask the bank for a Business Center login.** Their pack includes a *CYBS Portal User Guide*; the login is what you use to search transactions and confirm what actually happened, and it is the source of truth when a response and your records disagree.
 
 **d. Configure the profile's response pages, or override them per request.** Secure Acceptance will not activate a profile until a customer response page is configured. Either set them once in the Business Center (**Payment Configuration → Secure Acceptance Settings → your profile → Customer Response**), or pass `return_url` / `cancel_url` / `notify_url` on every `create_payment` call and let the `override_*` fields take precedence:
 
 ```python
-notify_url="/api/method/gateway_payment_return?gateway=Peoples Bank",
-return_url="/api/method/gateway_payment_return?gateway=Peoples Bank",
+notify_url="/api/method/gateway_payment_return?gateway=Peoples Bank (LKR)",
+return_url="/api/method/gateway_payment_return?gateway=Peoples Bank (LKR)",
 cancel_url="/app/slot-allocation/%s" % order.name,
 ```
 
@@ -150,8 +151,8 @@ bench --site <your-site> console
 ```
 
 ```python
-from sl_payment_gateways.gateways import peoples_bank
-result = peoples_bank.build_checkout("TEST-001", "10.00", "LKR", {})
+from sl_payment_gateways.gateways import peoples_bank_lkr      # or peoples_bank_usd, with "USD"
+result = peoples_bank_lkr.build_checkout("TEST-001", "10.00", "LKR", {})
 print(result["checkout_url"])          # ...testsecureacceptance.cybersource.com/pay
 print(result["fields"]["profile_id"])  # your test profile
 print(result["fields"]["signature"])   # non-empty
@@ -202,10 +203,12 @@ The response's `decision` field is what this app maps to a status. From CyberSou
 
 ## 4. Going live
 
+Each gateway goes live on its own. Switching one does not affect the other, so you can run USD live while LKR is still in sandbox.
+
 1. Get the **production** Profile ID, Access Key and Secret Key from People's Bank — a different profile, not a promotion of the test one.
-2. Paste them into `live_profile_id`, `live_access_key`, `live_secret_key`.
+2. Paste them into `live_profile_id`, `live_access_key`, `live_secret_key` in **that currency's** Settings.
 3. Configure that profile's customer response pages in the Business Center (or keep passing the `override_*` URLs per request).
-4. Untick **Use Sandbox** and save.
+4. Untick **Use Sandbox**, make sure **Enabled** is ticked, and save.
 5. Run one real, small payment end to end, and confirm it in the Business Center.
 
 The switch moves everything together — endpoint, profile, access key and signing key. It never falls back across modes: an empty `live_secret_key` fails with an error naming that field, rather than quietly signing a live checkout with your test key.
@@ -216,12 +219,14 @@ The switch moves everything together — endpoint, profile, access key and signi
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `Peoples Bank Settings doctype does not exist` | App not migrated | `bench --site <site> migrate` |
+| `Peoples Bank USD Settings doctype does not exist` (or LKR) | App not migrated | `bench --site <site> migrate` |
+| `Peoples Bank (LKR) is switched off` | **Enabled** is unticked in that gateway's Settings | Fill in its credentials, tick **Enabled** |
+| `Peoples Bank (USD) cannot be charged in LKR - it charges in USD only` | A caller sent a fee to the other currency's gateway | Ask `list_gateways(currency=<fee currency>)` which gateway to offer |
+| LKR fees are still offered People's Bank (USD) | `Peoples Bank LKR Settings` is not **Enabled** | Configure and enable it. Until then the USD fallback is intended |
 | `... is not configured for Live mode: set 'live_secret_key'` | Live credential empty | Fill it in — it will not use the sandbox one |
 | `Invalid return_url: ... requires an https:// URL` | Site served over http | Serve over HTTPS, or set the site's `host_name` to its https URL |
-| `Peoples Bank Settings holds an invalid 'sandbox_checkout_url'` | Override set to a non-https URL | Fix it, or clear the field to use CyberSource's endpoint |
-| `People's Bank cannot be charged in LKR. Accepted: USD` | **Allow LKR Charges** is off | Confirm with the bank that LKR is enabled on the profile, then tick it in Settings |
-| `decision=ERROR`, `reason_code=102`, `invalid_fields=currency` | LKR allowed here, but not enabled on the CyberSource profile | Untick **Allow LKR Charges** until the bank enables it |
+| `Peoples Bank LKR Settings holds an invalid 'sandbox_checkout_url'` (or USD) | Override set to a non-https URL | Fix it, or clear the field to use CyberSource's endpoint |
+| `decision=ERROR`, `reason_code=102`, `invalid_fields=currency` | That currency's credentials are in the other currency's Settings | Put each profile's credentials in its own currency's Settings |
 | `decision=DECLINE`, `reason_code=102`, `message=Field length cannot be greater than 25.:DINVALIDDATA`, **no `invalid_fields`** | A value over 25 characters reached the processor. `auth_trans_ref_no` is the usual one — this app now truncates it. If it recurs, `reference_number` (your order id) is the one over the limit | Shorten the order id / naming series to 25 characters or fewer |
 | CyberSource shows "Invalid request — field(s): signature" | Wrong secret key for the profile, or the two are from different environments | Check the profile/access/secret triple all came from the same profile |
 | CyberSource rejects the request naming a signed field | A name in `signed_field_names` with no matching field. This app builds both together, so it usually means a `bill_to_*` value was rejected on its own merits — most often a malformed `bill_to_email` or a country that is not a 2-letter ISO code | Pass a valid email and a code like `LK` |

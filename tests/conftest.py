@@ -185,67 +185,57 @@ def payhere_notification():
 	return _build
 
 
+PEOPLES_SETTINGS_DOCTYPES = ("Peoples Bank USD Settings", "Peoples Bank LKR Settings")
+
+
+def _install_peoples_bank(values, passwords):
+	"""Register ONE settings doc under both People's Bank doctypes.
+
+	The USD and LKR gateways are the same protocol over different profiles, and
+	almost every test here is about the protocol. Sharing the doc means a test
+	that flips `use_sandbox` or blanks a key does so for whichever gateway it
+	then calls, without caring which. Tests about the two profiles being
+	different (TestTwoProfiles) install their own, separate docs.
+	"""
+	doc = frappe_stub.FakeSettingsDoc(values, passwords=passwords)
+
+	for doctype in PEOPLES_SETTINGS_DOCTYPES:
+		frappe.test_docs[doctype] = doc
+
+	return doc
+
+
 @pytest.fixture
 def peoples_bank_settings():
-	"""Both credential sets present, sandbox active, LKR allowed.
-
-	`allow_lkr` is on because most tests here are about the Secure Acceptance
-	protocol - what gets signed, in what order - and they price in LKR. Leaving
-	the gate closed would make them all assert the gate instead. The gate has
-	its own tests (TestCurrencyGate) and its own fixture below, which is where
-	the shipped default of "off" is pinned down.
-	"""
-	frappe.test_docs["Peoples Bank Settings"] = frappe_stub.FakeSettingsDoc(
+	"""Both credential sets present, sandbox active, gateway enabled."""
+	return _install_peoples_bank(
 		{
-			"use_sandbox": 1,
-			"allow_lkr": 1,
-			"sandbox_profile_id": PEOPLES_SANDBOX_PROFILE_ID,
-			"sandbox_access_key": PEOPLES_SANDBOX_ACCESS_KEY,
-			"live_profile_id": PEOPLES_LIVE_PROFILE_ID,
-			"live_access_key": PEOPLES_LIVE_ACCESS_KEY,
-		},
-		passwords={
-			"sandbox_secret_key": PEOPLES_SANDBOX_SECRET,
-			"live_secret_key": PEOPLES_LIVE_SECRET,
-		},
-	)
-	return frappe.test_docs["Peoples Bank Settings"]
-
-
-@pytest.fixture
-def peoples_bank_usd_only_settings():
-	"""The shipped default: LKR not yet enabled on the CyberSource profile."""
-	frappe.test_docs["Peoples Bank Settings"] = frappe_stub.FakeSettingsDoc(
-		{
+			"enabled": 1,
 			"use_sandbox": 1,
 			"sandbox_profile_id": PEOPLES_SANDBOX_PROFILE_ID,
 			"sandbox_access_key": PEOPLES_SANDBOX_ACCESS_KEY,
 			"live_profile_id": PEOPLES_LIVE_PROFILE_ID,
 			"live_access_key": PEOPLES_LIVE_ACCESS_KEY,
 		},
-		passwords={
+		{
 			"sandbox_secret_key": PEOPLES_SANDBOX_SECRET,
 			"live_secret_key": PEOPLES_LIVE_SECRET,
 		},
 	)
-	return frappe.test_docs["Peoples Bank Settings"]
 
 
 @pytest.fixture
 def peoples_bank_legacy_settings():
 	"""The pre-split shape: one unprefixed credential set."""
-	frappe.test_docs["Peoples Bank Settings"] = frappe_stub.FakeSettingsDoc(
+	return _install_peoples_bank(
 		{
+			"enabled": 1,
 			"use_sandbox": 1,
-			# Same reason as peoples_bank_settings: this fixture exists to
-			# exercise the legacy credential fields, not the currency gate.
-			"allow_lkr": 1,
 			"profile_id": PEOPLES_SANDBOX_PROFILE_ID,
 			"access_key": PEOPLES_SANDBOX_ACCESS_KEY,
 		},
-		passwords={"secret_key": PEOPLES_SANDBOX_SECRET},
+		{"secret_key": PEOPLES_SANDBOX_SECRET},
 	)
-	return frappe.test_docs["Peoples Bank Settings"]
 
 
 @pytest.fixture

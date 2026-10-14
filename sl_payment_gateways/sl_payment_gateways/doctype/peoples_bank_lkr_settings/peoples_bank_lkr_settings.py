@@ -1,0 +1,5 @@
+from sl_payment_gateways.peoples_bank_settings import PeoplesBankSettingsController
+
+
+class PeoplesBankLKRSettings(PeoplesBankSettingsController):
+	pass

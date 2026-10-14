@@ -18,7 +18,7 @@ import string
 import pytest
 
 import frappe
-from sl_payment_gateways.gateways import payhere, peoples_bank, webxpay
+from sl_payment_gateways.gateways import payhere, peoples_bank, peoples_bank_lkr, webxpay
 
 # Exceptions a caller is entitled to see. Anything else is a bug.
 CLEAN = (frappe.ValidationError, frappe.DoesNotExistError)
@@ -166,7 +166,7 @@ class TestPeoplesBankHostileInput:
 
 		for _ in range(500):
 			with pytest.raises(CLEAN):
-				peoples_bank.verify_response(random_form_dict(rng, keys))
+				peoples_bank_lkr.verify_response(random_form_dict(rng, keys))
 
 	@pytest.mark.parametrize("signature", HOSTILE_STRINGS)
 	def test_a_forged_signature_never_verifies(
@@ -176,7 +176,7 @@ class TestPeoplesBankHostileInput:
 		payload["signature"] = signature
 
 		with pytest.raises(CLEAN):
-			peoples_bank.verify_response(payload)
+			peoples_bank_lkr.verify_response(payload)
 
 	def test_single_character_changes_never_verify(self, peoples_bank_settings, peoples_bank_response):
 		# Every signed field is bound to the signature, so touching any one
@@ -190,7 +190,7 @@ class TestPeoplesBankHostileInput:
 			payload[field] = str(payload.get(field) or "") + "x"
 
 			with pytest.raises(CLEAN):
-				peoples_bank.verify_response(payload)
+				peoples_bank_lkr.verify_response(payload)
 
 	def test_bit_flips_in_a_real_signature_never_verify(self, peoples_bank_settings, peoples_bank_response):
 		genuine = peoples_bank_response()
@@ -204,7 +204,7 @@ class TestPeoplesBankHostileInput:
 			payload["signature"] = base64.b64encode(bytes(flipped)).decode()
 
 			with pytest.raises(CLEAN):
-				peoples_bank.verify_response(payload)
+				peoples_bank_lkr.verify_response(payload)
 
 	@pytest.mark.parametrize("value", HOSTILE_VALUES)
 	def test_non_ascii_and_junk_values_are_rejected_not_crashed(
@@ -214,12 +214,12 @@ class TestPeoplesBankHostileInput:
 		payload["req_amount"] = value
 
 		with pytest.raises(CLEAN):
-			peoples_bank.verify_response(payload)
+			peoples_bank_lkr.verify_response(payload)
 
 	@pytest.mark.parametrize("value", HOSTILE_VALUES)
 	def test_hostile_signed_field_names_are_a_clean_error(self, peoples_bank_settings, value):
 		with pytest.raises(CLEAN):
-			peoples_bank.verify_response(
+			peoples_bank_lkr.verify_response(
 				frappe._dict({"signature": "aGk=", "signed_field_names": value})
 			)
 
@@ -286,7 +286,7 @@ class TestBuildCheckoutHostileInput:
 	@pytest.mark.parametrize("value", HOSTILE_VALUES)
 	def test_peoples_bank_urls(self, peoples_bank_settings, value):
 		try:
-			fields = peoples_bank.build_checkout("SO-1", "1.00", "LKR", {"return_url": value})["fields"]
+			fields = peoples_bank_lkr.build_checkout("SO-1", "1.00", "LKR", {"return_url": value})["fields"]
 		except CLEAN:
 			return
 		# Three outcomes are all correct: refused, omitted (the override is
@@ -300,7 +300,7 @@ class TestBuildCheckoutHostileInput:
 
 	@pytest.mark.parametrize("value", HOSTILE_VALUES)
 	def test_peoples_bank_customer_fields_never_break_the_form(self, peoples_bank_settings, value):
-		fields = peoples_bank.build_checkout(
+		fields = peoples_bank_lkr.build_checkout(
 			"SO-1",
 			"1.00",
 			"LKR",
@@ -337,7 +337,7 @@ class TestBuildCheckoutHostileInput:
 	@pytest.mark.parametrize("order_id", HOSTILE_VALUES)
 	def test_peoples_bank_order_id(self, peoples_bank_settings, order_id):
 		try:
-			fields = peoples_bank.build_checkout(order_id, "1.00", "LKR", {})["fields"]
+			fields = peoples_bank_lkr.build_checkout(order_id, "1.00", "LKR", {})["fields"]
 		except CLEAN:
 			return
 		# A comma in reference_number would shift the signed name=value
